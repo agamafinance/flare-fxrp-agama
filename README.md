@@ -54,11 +54,11 @@ Agama uses five of Flare's enshrined protocols, each doing real work, not a supe
 | **Confidential Compute (TEE)** | The YT demand side runs as a confidential RFQ in a Confidential Space enclave: market makers quote privately, only the winning settlement is revealed. The enclave key is registered only via an RS256 attestation verified on chain, bound to the approved code image. |
 | **FTSO** | The enclave and front read live XRP/USD to bound quotes and denominate the fixed rate in USD. |
 | **Secure RNG** | Breaks best-price ties between market makers fairly and verifiably in the confidential matcher. |
-| **FDC** | Native-XRP deposits: an FDC Payment proof of an XRPL transfer is verified on chain before crediting. |
+| **FDC** | Native-XRP deposits: an FDC Payment proof of an XRPL transfer is verified on chain (against the Relay Merkle root) before crediting. Proven end to end with a real XRPL testnet payment and its live attestation. |
 
 ## Proven
 
-`forge test` runs **21 tests, all green**, including:
+`forge test` runs **22 tests, all green**, including:
 
 - The full lifecycle: split, YT captures the yield, PT redeems principal 1:1.
 - Sell YT to lock certainty; the yield accounting splits correctly on transfer.
@@ -76,6 +76,8 @@ Agama uses five of Flare's enshrined protocols, each doing real work, not a supe
 - **Attestation-gated enclave registration**: a real RS256 attestation is verified on chain (via
   the modexp precompile); tampered signatures, forged enclave keys, and unapproved code images are
   all rejected.
+- **A real native-XRP round-trip**: a real XRPL testnet payment, attested by the FDC, is verified
+  on chain against the live Relay Merkle root and credited by `XrpOnRamp` (replay-protected).
 
 ## Confidential Compute (Bounty 2)
 
@@ -145,8 +147,9 @@ see [`DEPLOY.md`](./DEPLOY.md).
   whose price-per-share only grows. `bizFXRP` is permissionless; Mystic `CSXRP` is the higher
   credibility target but gates deposits. DEX LP tokens are not strippable (no stable principal).
 - **FAssets.** Native XRP becomes FXRP only through the FAssets protocol (an XRPL payment plus an
-  FDC proof), so it is not a synchronous on-chain deposit. Build against FXRP as a plain ERC20;
-  pre-mint test FXRP for a live demo.
+  FDC proof), so it is not a synchronous on-chain deposit. `XrpOnRamp` implements the FDC side and
+  is proven against a real XRPL testnet payment (`fdc-onramp/run.py` reproduces the round-trip);
+  wiring the FAssets mint that follows is the next step.
 - **Liquidity is the product.** The locked rate is the discount minus slippage. A trade that is
   large relative to the pool eats its own discount, so depth matters.
 
