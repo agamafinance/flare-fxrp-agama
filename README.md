@@ -58,7 +58,7 @@ Agama uses five of Flare's enshrined protocols, each doing real work, not a supe
 
 ## Proven
 
-`forge test` runs **37 tests, all green**, including:
+`forge test` runs **34 tests, all green**, including:
 
 - The full lifecycle: split, YT captures the yield, PT redeems principal 1:1.
 - Sell YT to lock certainty; the yield accounting splits correctly on transfer.
@@ -131,14 +131,14 @@ Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can tr
 
 | Contract | Address |
 | --- | --- |
-| Anchor | `0x44E8F6c8153F4104b3DA5dc2ca1FA4c114678d13` |
-| FXRP (demo) | `0x45a0ED01D31dAd226ba26B448f43BFDfD1d0fb6f` |
+| Anchor | `0x94F3c1D2cB99B0EFa6C07C9d7aCD47f8FBe906E0` |
+| FXRP (demo) | `0xb23b0daDa02c86D2A7E76d2060c34Fff14D1E3A6` |
 | Vault | `0x6dec4d8bfb94eee9228adf330260ab31e0afd2d9` |
-| YieldSplitter | `0xd08FbB1eb7fA2D304DB7343Af9B67650A87a0db1` |
-| PT | `0xc2b3382DDE30438De339df4081B4823Af6559a90` |
-| YT | `0xF749F4C6451739fb9e69C59203c2FB88a750bdE1` |
-| PtAmm | `0xbeF4f1426d45D92C3Ca39421B4b6CfAEA1Ad4A3e` |
-| ConfidentialYtRfq (signed quotes + reserve + FTSO band, gated by the live enclave key) | `0xde8b54126782141a2Cb5Fcd2331f1e9286764E01` |
+| YieldSplitter | `0xcB633439CCa82035Dfb0553Caed2552818E3a29E` |
+| PT | `0x7779771976CF16a8EF522E03158620d4dAA516c1` |
+| YT | `0x1592f5cd44676f182162AC9DC09F9B12C68E0B4D` |
+| PtAmm | `0x818DE98267f844fCa9543aAd6f00bca14a3206d0` |
+| ConfidentialYtRfq (signed quotes + reserve + FTSO band, gated by the live enclave key) | `0x73F18087dd45d180e75cADcD383479624326E336` |
 | ConfidentialSpaceRegistry (real Google token, production TDX claims + exact eat_nonce verified on chain) | `0x6198FA295a9871b9D41380355d7799df6CB455F2` |
 | Live enclave (GCP Confidential Space, **production** Intel TDX) | key `0x06854aA1291CbbDeA01Bc067A01bec73760FF1A8`, image `sha256:8c1ae4d4…0da136` |
 | FtsoReader | `0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f` |
