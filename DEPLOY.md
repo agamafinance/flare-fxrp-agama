@@ -33,11 +33,35 @@ You need a deployer key funded with C2FLR (gas only — the demo FXRP is minted 
 
 ## Front (on-chain dApp)
 
-An artifact can't call an RPC (strict CSP), so the on-chain front is a small Next.js + viem
-app (Vercel-friendly, matches the Agama stack). It reads the deployed addresses from a config,
-lets a user mint demo FXRP, calls `anchor.previewLock` for the live quote, then
-`anchor.lockFixedRate` to lock, and `anchor.redeem` after maturity. The interactive artifact
-(YieldSpace math, pool-depth slider) is the pitch/explainer; this is the live demo.
+`frontend/app.html` is a self-contained viem dApp (served over localhost, since a hosted
+artifact can't call an RPC). It reads the deployed addresses from a config, lets a user mint
+demo FXRP, calls `anchor.previewLock` for the live quote, `anchor.lockFixedRate` to lock, and
+`anchor.redeem` after maturity. Pick the network in the header (Coston2 / 10-min demo / local).
+
+```bash
+./run-local.sh   # anvil + deploy + serve, then open http://127.0.0.1:8547/app.html
+```
+
+## Confidential YT RFQ demo (Bounty 2)
+
+Deploy the RFQ against an existing FXRP/YT and register the enclave key:
+
+```bash
+ENCLAVE=$(cast wallet address --private-key $ENCLAVE_PK)
+PRIVATE_KEY=0x.. FXRP=0x.. YT=0x.. ENCLAVE=$ENCLAVE \
+  forge script script/DeployRfq.s.sol:DeployRfq --rpc-url coston2 --broadcast
+```
+
+Then in the front's "Sell your yield" panel a seller splits FXRP into PT + YT and opens a
+confidential RFQ (escrows YT). Market makers quote privately to the enclave; to settle, run the
+enclave + relayer helper:
+
+```bash
+PRIVATE_KEY=0x<relayer> ./script/settle-rfq.sh <rfqId> <seller> <ytAmount> <price>
+```
+
+The enclave (`script/Enclave.s.sol`) picks best execution and signs; the contract verifies the
+signature and settles. The front polls and flips to "settled". Losing quotes never touch the chain.
 
 ## Notes
 
