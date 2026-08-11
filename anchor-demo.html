@@ -1,4 +1,4 @@
-<title>Anchor · Lock a fixed rate on your XRP</title>
+<title>Agama · Lock a fixed rate on your XRP</title>
 <style>
   :root{
     --bg:#EEF2EE; --panel:#FFFFFF; --panel-2:#F6F9F5;
@@ -182,8 +182,8 @@
 
   <header class="top">
     <div class="brand">
-      <div class="mark">⚓</div>
-      <div><b>Anchor</b> &nbsp;<span>by Agama</span></div>
+      <div class="mark">A</div>
+      <div><b>Agama</b> &nbsp;<span>fixed-rate XRP</span></div>
     </div>
     <div class="netpill">XRPFi · Flare</div>
   </header>
@@ -256,10 +256,10 @@
     <div class="grid2">
       <div class="card pad">
         <h3 class="cardtitle">Your payoff is flat. The vault's isn't.</h3>
-        <p class="cardnote">Same deposit, same term. Anchor pays the rate you locked in every scenario; the raw vault pays whatever XRPFi actually yields, which nobody knows in advance.</p>
+        <p class="cardnote">Same deposit, same term. Agama pays the rate you locked in every scenario; the raw vault pays whatever XRPFi actually yields, which nobody knows in advance.</p>
         <div id="scenarios"></div>
         <div class="legend">
-          <span><i style="background:var(--brand)"></i>Anchor (fixed)</span>
+          <span><i style="background:var(--brand)"></i>Agama (fixed)</span>
           <span><i style="background:var(--yt)"></i>Raw vault (variable)</span>
         </div>
       </div>
@@ -301,7 +301,7 @@
   </section>
 
   <footer>
-    <div>⚓ <b style="color:var(--soft)">Anchor</b> · a fixed-rate primitive for XRPFi, built for Flare Summer Signal</div>
+    <div><b style="color:var(--soft)">Agama</b> · a fixed-rate primitive for XRPFi, built for Flare Summer Signal</div>
     <div><span class="ok">● POC live</span> &nbsp;·&nbsp; <span class="mono">8/8</span> Foundry tests green · incl. a live Flare fork test on a real FXRP vault</div>
   </footer>
 
@@ -377,7 +377,7 @@
     var max=Math.max.apply(null, vals.map(function(o){return Math.max(o.a,o.v)})); max=max||1;
     host.innerHTML=vals.map(function(o){
       var wA=Math.max(3,o.a/max*100), wV=Math.max(3,o.v/max*100);
-      var win = o.a>=o.v ? '<b style="color:var(--up)">Anchor +'+fmt(o.a,0)+'</b>' : '<b style="color:var(--yt)">Vault +'+fmt(o.v,0)+'</b>';
+      var win = o.a>=o.v ? '<b style="color:var(--up)">Agama +'+fmt(o.a,0)+'</b>' : '<b style="color:var(--yt)">Vault +'+fmt(o.v,0)+'</b>';
       return '<div class="scn"><div class="sh"><span>'+o.n+'</span><span>'+win+'</span></div>'+
         '<div class="bar" style="margin-bottom:5px"><div class="fill anchor" style="width:'+wA+'%">+'+fmt(o.a,0)+'</div></div>'+
         '<div class="bar"><div class="fill varb" style="width:'+wV+'%">+'+fmt(o.v,0)+'</div></div></div>';

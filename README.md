@@ -1,8 +1,8 @@
-# ⚓ Anchor
+# Agama · fixed-rate FXRP on Flare
 
 **Lock a fixed rate on your XRP. Sell the uncertainty.**
 
-Anchor is a fixed-rate savings primitive for XRPFi on [Flare](https://flare.network). You
+Agama brings fixed-rate savings to XRPFi on [Flare](https://flare.network). You
 deposit FXRP, buy the **principal token (PT)** at a discount, and redeem it **1:1 at maturity**.
 Your return is fixed the moment you buy, no matter what the underlying vault actually earns. The
 variable yield goes to whoever wants the upside (the **yield token, YT**).
@@ -12,7 +12,7 @@ Built for the Flare Summer Signal hackathon. Live on Coston2.
 ## Why
 
 XRPFi is yield poor and yield variable: today's vaults pay a few percent that nobody can promise
-in advance. Anchor turns that variable stream into a choice. Buy PT to lock certainty, or buy YT
+in advance. Agama turns that variable stream into a choice. Buy PT to lock certainty, or buy YT
 to take the upside. Same deposit, two honest sides of the same trade.
 
 ## How it works
@@ -37,12 +37,13 @@ nears, the YieldSpace curve flattens to constant-sum and PT converges to par mec
 | `SplitToken.sol` | Minimal ERC20 for PT and YT. The YT instance settles yield on every transfer. |
 | `PtAmm.sol` | A real YieldSpace AMM (`x^(1-t) + y^(1-t) = k`) for PT vs FXRP, decimals-aware (real FXRP is 6 decimals), PRBMath fixed point. Buying PT locks a fixed rate. |
 | `Anchor.sol` | The user-facing router. One call to lock a fixed rate, a quote for the front, and 1:1 redemption at maturity. |
-| `interfaces/IERC4626.sol` | The standard vault surface Anchor codes against, so a real vault is a one-line swap. |
+| `ConfidentialYtRfq.sol` | The confidential YT demand side. Market makers quote privately inside a TEE; the enclave signs only the winning settlement, which this contract verifies and executes. |
+| `interfaces/IERC4626.sol` | The standard vault surface the splitter codes against, so a real vault is a one-line swap. |
 | `MockERC20.sol`, `MockVault.sol` | Test and demo stand-ins for FXRP and a yield-bearing vault. |
 
 ## Proven
 
-`forge test` runs **10 tests, all green**, including:
+`forge test` runs **13 tests, all green**, including:
 
 - The full lifecycle: split, YT captures the yield, PT redeems principal 1:1.
 - Sell YT to lock certainty; the yield accounting splits correctly on transfer.
@@ -52,6 +53,26 @@ nears, the YieldSpace curve flattens to constant-sum and PT converges to par mec
 - The unified router exercised at both 18 and the real **6 decimals** (identical result).
 - A **live Flare mainnet fork test** binding the splitter to the real `bizFXRP` ERC-4626 vault:
   real FXRP deposit, real price-per-share, position equals principal.
+- The confidential YT RFQ: an enclave-signed best-execution settlement is verified and settled on
+  chain; a forged signature is rejected; the seller can reclaim escrowed YT.
+
+## Confidential Compute (Bounty 2)
+
+Fixed-rate products need a two-sided market: for a buyer to lock certainty, someone must take the
+variable yield (the YT). On a yield-poor chain that YT demand is thin, and market makers will not
+post public quotes because an on-chain order book leaks their pricing.
+
+`ConfidentialYtRfq` runs that demand side as a **confidential request-for-quote inside a Flare
+Confidential Compute enclave (GCP Confidential Space, Intel TDX)**. Market makers submit sealed
+quotes to the enclave; it runs best execution and signs **only the winning settlement**; the
+contract verifies the enclave signature (registered on chain from its remote attestation) and
+settles atomically. The losing quotes never touch the chain.
+
+This makes the same product qualify for both hackathon tracks: an interoperable asset product
+(Bounty 1) whose counterparty market is a private application built with Flare Confidential
+Compute (Bounty 2). In this POC the enclave is a signer whose key the contract trusts (see
+`script/Enclave.s.sol`); in production the identical matching code runs in Confidential Space and
+its attestation registers the key.
 
 ## Live on Coston2 (chainId 114)
 
@@ -66,6 +87,7 @@ Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can tr
 | PT | `0x4557491bCd8Da8BD2e32861b5C3CB70EDCB3D1aE` |
 | YT | `0x04A05b47fd57E5230a428111B9c3B45c16493752` |
 | PtAmm | `0x77D28482ace00b7760766a7699e6DcdDeAeed82E` |
+| ConfidentialYtRfq | `0xFc2440629530a11915E65E3261779E37f70e3790` |
 
 A second instance with a short (10 minute) maturity is deployed for demoing the full lock to
 redeem cycle live: Anchor `0xd84508307C035F409777e2b5E5eCa90bE34Eb292`.
