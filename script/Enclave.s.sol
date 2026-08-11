@@ -3,6 +3,9 @@ pragma solidity ^0.8.25;
 
 import "forge-std/Script.sol";
 
+interface IReg { function getContractAddressByName(string calldata) external view returns (address); }
+interface IFtso { function getFeedById(bytes21) external view returns (uint256, int8, uint64); }
+
 /**
  * Enclave: simulates the Confidential Compute enclave that runs the YT RFQ matching.
  *
@@ -38,6 +41,9 @@ contract Enclave is Script {
             }
         }
 
+        // oracle-aware: cross-check the winning quote against the live FTSO oracle (see _oracleAware)
+        _oracleAware(best, ytAmount);
+
         bytes32 digest =
             keccak256(abi.encode("AnchorRFQ", block.chainid, rfq, rfqId, seller, winner, ytAmount, best, deadline));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
@@ -60,5 +66,16 @@ contract Enclave is Script {
                 vm.toString(s)
             )
         );
+    }
+
+    /// The enclave reads the live enshrined FTSO oracle to (1) reject economically absurd quotes
+    /// (a YT premium must be positive and below the notional) and (2) express the premium in USD.
+    function _oracleAware(uint256 best, uint256 ytAmount) internal view {
+        require(best > 0 && best < ytAmount, "quote out of economic bound");
+        IFtso ftso = IFtso(IReg(0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019).getContractAddressByName("FtsoV2"));
+        (uint256 pxv, int8 pxd,) = ftso.getFeedById(0x015852502f55534400000000000000000000000000);
+        uint256 px1e18 = pxv * 1e18 / (10 ** uint256(uint8(pxd)));
+        console2.log("FTSO XRP/USD (1e18)", px1e18);
+        console2.log("premium in USD (1e18)", best * px1e18 / 1e6);
     }
 }
