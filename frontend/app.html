@@ -61,7 +61,6 @@
     <div style="display:flex;gap:8px;align-items:center">
       <select id="net" class="netsel">
         <option value="coston2">Coston2</option>
-        <option value="coston2demo">Coston2 · 10-min demo</option>
         <option value="local">Local (anvil)</option>
       </select>
       <button id="connect" class="btn-wallet">Connect</button>
@@ -149,13 +148,6 @@ const CONFIG = {
     ftso:'0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f',
     enclaveUrl:'http://34.59.74.87:8080', // live matcher in GCP Confidential Space (production TDX)
   },
-  coston2demo: { // short maturity (~10 min) so the full lock -> redeem cycle is demoable live
-    chainId: 114, name:'Coston2', rpc:'https://coston2-api.flare.network/ext/C/rpc',
-    symbol:'C2FLR',
-    anchor:'0xd84508307C035F409777e2b5E5eCa90bE34Eb292',
-    fxrp:'0x8E55FD325B39eC271f9bd49a2A3cc99b87990212',
-    pt:'0x58A3A1B185ecBFe9730AC36Ec6a0ce454D9EE9D8',
-  },
 };
 
 const ANCHOR_ABI = [
@@ -181,7 +173,7 @@ const RFQ_ABI = [
   {type:'function',name:'openRfq',stateMutability:'nonpayable',inputs:[{type:'uint256'},{type:'uint256'}],outputs:[{type:'uint256'}]},
   {type:'function',name:'cancel',stateMutability:'nonpayable',inputs:[{type:'uint256'}],outputs:[]},
   {type:'function',name:'nextId',stateMutability:'view',inputs:[],outputs:[{type:'uint256'}]},
-  {type:'function',name:'rfqs',stateMutability:'view',inputs:[{type:'uint256'}],outputs:[{type:'address'},{type:'uint256'},{type:'bool'}]},
+  {type:'function',name:'rfqs',stateMutability:'view',inputs:[{type:'uint256'}],outputs:[{type:'address'},{type:'uint256'},{type:'uint256'},{type:'uint256'},{type:'bool'}]},
 ];
 const MAX = (2n**256n)-1n;
 const DEC = 6; // FXRP / PT decimals
@@ -242,7 +234,7 @@ async function refreshYt(){
 async function pollRfq(){
   if(!cfg.rfq || !myRfqId) return;
   try{
-    const [, amt, open] = await pub.readContract({address:cfg.rfq, abi:RFQ_ABI, functionName:'rfqs', args:[myRfqId]});
+    const [, amt, , , open] = await pub.readContract({address:cfg.rfq, abi:RFQ_ABI, functionName:'rfqs', args:[myRfqId]});
     if(open){
       setRfqStatus('RFQ #'+myRfqId+' open · '+fmt(amt)+' YT escrowed. Market makers are quoting privately to the enclave.');
       $('cancelRfq').classList.remove('hide');
