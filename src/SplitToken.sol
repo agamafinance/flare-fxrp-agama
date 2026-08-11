@@ -24,6 +24,9 @@ contract SplitToken {
     address public immutable splitter;
     bool public immutable yieldBearing;
 
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+
     constructor(string memory n, string memory s, uint8 _decimals, address _splitter, bool _yieldBearing) {
         name = n;
         symbol = s;
@@ -40,15 +43,18 @@ contract SplitToken {
     function mint(address to, uint256 a) external onlySplitter {
         totalSupply += a;
         balanceOf[to] += a;
+        emit Transfer(address(0), to, a);
     }
 
     function burn(address from, uint256 a) external onlySplitter {
         balanceOf[from] -= a;
         totalSupply -= a;
+        emit Transfer(from, address(0), a);
     }
 
     function approve(address sp, uint256 a) external returns (bool) {
         allowance[msg.sender][sp] = a;
+        emit Approval(msg.sender, sp, a);
         return true;
     }
 
@@ -78,5 +84,6 @@ contract SplitToken {
             ISplitterHook(splitter).ytResetDebt(f);
             ISplitterHook(splitter).ytResetDebt(to);
         }
+        emit Transfer(f, to, a);
     }
 }

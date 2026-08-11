@@ -12,6 +12,9 @@ contract MockERC20 is IERC20 {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+
     constructor(string memory n, string memory s, uint8 d) {
         name = n;
         symbol = s;
@@ -21,10 +24,12 @@ contract MockERC20 is IERC20 {
     function mint(address to, uint256 a) external {
         balanceOf[to] += a;
         totalSupply += a;
+        emit Transfer(address(0), to, a);
     }
 
     function approve(address sp, uint256 a) external returns (bool) {
         allowance[msg.sender][sp] = a;
+        emit Approval(msg.sender, sp, a);
         return true;
     }
 
@@ -45,5 +50,6 @@ contract MockERC20 is IERC20 {
         require(balanceOf[f] >= a, "balance");
         balanceOf[f] -= a;
         balanceOf[to] += a;
+        emit Transfer(f, to, a);
     }
 }

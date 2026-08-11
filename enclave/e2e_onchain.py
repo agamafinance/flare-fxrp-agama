@@ -16,6 +16,7 @@ from eth_abi import encode as abi_encode
 from eth_utils import keccak
 
 RPC = os.environ.get("RPC", "https://coston2-api.flare.network/ext/C/rpc")
+EXPLORER = "https://coston2-explorer.flare.network"
 CHAIN = 114
 ENCLAVE_URL = os.environ.get("ENCLAVE_URL", "http://104.155.152.64:8080")
 RFQ = os.environ.get("RFQ", "0xE29D17D25bb2e0b92442A7B4DD9843d46c7dA187")
@@ -40,8 +41,9 @@ def send(pk, to, sig, *args, value=None):
     a = ["cast", "send", to]
     if sig: a += [sig, *[str(x) for x in args]]
     if value: a += ["--value", value]
-    a += ["--private-key", pk, "--rpc-url", RPC]
-    return sh(*a)
+    a += ["--private-key", pk, "--rpc-url", RPC, "--json"]
+    try: return json.loads(sh(*a))["transactionHash"]
+    except Exception: return "?"
 
 def bal(tok, who): return int(call(tok, "balanceOf(address)(uint256)", who).split()[0])
 
@@ -68,12 +70,15 @@ for mm in (mm1, mm2):
     send(PK, FXRP, "mint(address,uint256)", mm.address, 100 * ONE)
     send(mm.key.hex(), FXRP, "approve(address,uint256)", RFQ, 2**256 - 1)
 
+print("STEP 1 - seller opens a confidential RFQ on-chain (escrows YT, sets a reserve)")
 send(PK, YT, "approve(address,uint256)", RFQ, 2**256 - 1)
-send(PK, RFQ, "openRfq(uint256,uint256)", YT_AMT, RESERVE)
+open_tx = send(PK, RFQ, "openRfq(uint256,uint256)", YT_AMT, RESERVE)
 rfq_id = int(call(RFQ, "nextId()(uint256)").split()[0]) - 1
 deadline = int(time.time()) + 3600
-print(f"opened RFQ #{rfq_id}: {YT_AMT/ONE} YT, reserve {RESERVE/ONE} FXRP\n")
+print(f"  RFQ #{rfq_id}: {int(YT_AMT/ONE)} YT escrowed, reserve {int(RESERVE/ONE)} FXRP")
+print(f"  tx {EXPLORER}/tx/{open_tx}\n")
 
+print("STEP 2 - market makers send SEALED quotes to the enclave; bad ones are rejected off-chain")
 # A. forged quote: attacker signs but claims to be mm1 -> enclave must reject (recovers attacker != mm1)
 forged = signed_quote(attacker, mm1.address, 5 * ONE, deadline, rfq_id)
 rA = post_settle(rfq_id, [forged])
@@ -92,25 +97,30 @@ rD = post_settle(rfq_id, flood)
 print("D. quote flooding (33)     ->", rD.status_code, rD.json())
 assert rD.status_code == 400 and "too many" in rD.json().get("error", "")
 
-# C. two authentic quotes at/above reserve: mm1=4, mm2=6 -> enclave picks mm2, signs, we settle
+print("\nSTEP 3 - enclave runs best-execution in the TEE and signs ONLY the winner")
+# two authentic quotes at/above reserve: mm1=4, mm2=6 -> enclave picks mm2, signs
 q1 = signed_quote(mm1, mm1.address, 4 * ONE, deadline, rfq_id)
 q2 = signed_quote(mm2, mm2.address, 6 * ONE, deadline, rfq_id)
 rC = post_settle(rfq_id, [q1, q2])
 s = rC.json()
-print("C. best authentic quote    ->", rC.status_code, {k: s[k] for k in ("winner", "price")})
+print(f"  mm1 quoted 4 FXRP, mm2 quoted 6 FXRP (both private) -> enclave picked {s['winner'][:10]} @ {int(s['price']/ONE)} FXRP")
+print(f"  enclave signature v={s['v']} r={s['r'][:14]}... (the losing 4-FXRP quote never touched the chain)")
 assert rC.status_code == 200 and s["winner"].lower() == mm2.address.lower() and s["price"] == 6 * ONE
 
+print("\nSTEP 4 - anyone relays the enclave-signed settlement; the contract verifies and settles atomically")
 seller_before = bal(FXRP, SELLER)
-send(PK, RFQ, "settle((uint256,address,address,uint256,uint256,uint256),uint8,bytes32,bytes32)",
+settle_tx = send(PK, RFQ, "settle((uint256,address,address,uint256,uint256,uint256),uint8,bytes32,bytes32)",
      f'({rfq_id},{SELLER},{s["winner"]},{s["ytAmount"]},{s["price"]},{s["deadline"]})', s["v"], s["r"], s["s"])
-print(f"\nSETTLED on-chain: seller +{(bal(FXRP,SELLER)-seller_before)/ONE} FXRP, winner mm2 holds {bal(YT,mm2.address)/ONE} YT")
+print(f"  seller +{int((bal(FXRP,SELLER)-seller_before)/ONE)} FXRP premium, winner MM received {int(bal(YT,mm2.address)/ONE)} YT")
+print(f"  tx {EXPLORER}/tx/{settle_tx}")
 assert bal(FXRP, SELLER) - seller_before == 6 * ONE and bal(YT, mm2.address) == YT_AMT
 
-# replay of the settled RFQ must fail
+# STEP 5: replay of the settled RFQ must fail (RFQ is now closed)
+print("\nSTEP 5 - replaying the same settlement reverts (RFQ already closed)")
 replay = subprocess.run(["cast", "send", RFQ,
     "settle((uint256,address,address,uint256,uint256,uint256),uint8,bytes32,bytes32)",
     f'({rfq_id},{SELLER},{s["winner"]},{s["ytAmount"]},{s["price"]},{s["deadline"]})', str(s["v"]), s["r"], s["s"],
     "--private-key", PK, "--rpc-url", RPC], capture_output=True, text=True)
-print("replay rejected:", replay.returncode != 0)
+print("  replay reverted:", replay.returncode != 0)
 assert replay.returncode != 0
 print("\nALL E2E CHECKS PASSED")
