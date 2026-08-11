@@ -82,11 +82,16 @@ def sign_settlement(acct, chain_id, rfq, rfq_id, seller, winner, yt_amount, pric
     return sig.v, "0x" + sig.r.to_bytes(32, "big").hex(), "0x" + sig.s.to_bytes(32, "big").hex()
 
 if __name__ == "__main__":
-    acct = Account.from_key(os.environ["ENCLAVE_PK"])
-    print("enclave signing key:", acct.address)
-    print("attestation token:", attestation_token(acct.address)[:120])
+    # the enclave key address is the attestation nonce (lowercase, to match the on-chain check).
+    # requesting a token does not need the private key; signing settlements does.
+    pk = os.environ.get("ENCLAVE_PK")
+    address = (Account.from_key(pk).address if pk else os.environ.get(
+        "ENCLAVE_ADDRESS", "0x1724fa1ab2c8b088128cd1c6f1efdfa1514d5253")).lower()
+    print("enclave key (eat_nonce):", address)
+    print("=== Confidential Space attestation token ===")
+    print(attestation_token(address))  # full token; on GCP this is a Google-signed RS256 JWT
     # demo: two sealed quotes, best wins, only the winner is revealed
     quotes = [{"mm": "0x00000000000000000000000000000000000000A1", "price": 2_000_000},
               {"mm": "0x00000000000000000000000000000000000000B2", "price": 1_500_000}]
     winner, price = best_execution(quotes, yt_amount=100_000_000)
-    print("winner:", winner, "price:", price, "(losing quotes never leave the enclave)")
+    print("best-exec winner:", winner, "price:", price, "(losing quotes never leave the enclave)")

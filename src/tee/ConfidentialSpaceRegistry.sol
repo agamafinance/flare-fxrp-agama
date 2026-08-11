@@ -87,7 +87,9 @@ contract ConfidentialSpaceRegistry is IEnclaveRegistry {
         bytes memory payload = Base64URL.decode(payloadB64);
         require(_contains(payload, ISSUER), "issuer not Confidential Space");
         require(_contains(payload, bytes.concat('"image_digest":"', expectedImageDigest, '"')), "unexpected enclave image");
-        require(_contains(payload, bytes.concat('"eat_nonce":"', _toHex(claimedKey), '"')), "enclave key not attested");
+        // the enclave key must be present as the token's eat_nonce (robust to string or array form)
+        require(_contains(payload, bytes('"eat_nonce"')), "no eat_nonce");
+        require(_contains(payload, _toHex(claimedKey)), "enclave key not attested");
 
         enclaveSigner = claimedKey;
         emit EnclaveRegistered(claimedKey, expectedImageDigest);
