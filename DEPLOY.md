@@ -1,4 +1,4 @@
-# Anchor — deployment
+# Agama · deployment
 
 Fixed-rate XRPFi product. Full stack: demo-mintable 6-decimal FXRP + ERC-4626 vault +
 YieldSplitter (PT/YT) + PtAmm (YieldSpace) + Anchor router.
@@ -12,7 +12,7 @@ YieldSplitter (PT/YT) + PtAmm (YieldSpace) + Anchor router.
 
 ## Deploy to Coston2 (Flare testnet, chainId 114)
 
-You need a deployer key funded with C2FLR (gas only — the demo FXRP is minted by the script).
+You need a deployer key funded with C2FLR (gas only; the demo FXRP is minted by the script).
 
 1. **Fund a key** with C2FLR from the faucet: https://faucet.flare.network/coston2
    (paste the address of the key you'll deploy with).
