@@ -9,13 +9,16 @@ the key. Then it serves:
 
   GET  /pubkey       -> the enclave signing address (also the attestation eat_nonce)
   GET  /attestation  -> the Confidential Space OIDC attestation token (RS256 JWT)
-  POST /settle       -> {rfq, chainId, rfqId, seller, ytAmount, deadline, quotes:[{mm,price}]}
-                        runs best execution (FTSO-bounded, ties broken by Flare Secure RNG) and
-                        returns the enclave signature {winner, price, v, r, s}. The losing quotes
+  POST /settle       -> {rfq, chainId, rfqId, quotes:[{mm, price, deadline, sig}]}
+                        Authenticates every quote (the MM must have signed it, see quoteDigest), reads
+                        the RFQ terms (seller, ytAmount, reserve) from chain, runs best execution
+                        (reserve-bounded, ties broken by Flare Secure RNG) and returns the enclave
+                        signature {seller, winner, ytAmount, price, deadline, v, r, s}. Losing quotes
                         never leave the enclave; only the signed winning settlement is returned.
 
-POC note: /settle is open for the demo; production authenticates market makers (signed/committed
-quotes) so a caller cannot request a settlement in their own favor.
+The endpoint is safe to expose: a caller cannot forge a quote for an MM (signature check), cannot
+alter the RFQ terms (read from chain, not the request), and cannot win below the seller's reserve
+(enforced here and again on-chain in settle).
 """
 import os, json, http.client, socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,6 +30,11 @@ import requests
 RPC = os.environ.get("COSTON2_RPC", "https://coston2-api.flare.network/ext/C/rpc")
 REGISTRY = "0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019"
 XRP_USD_FEED = "0x015852502f55534400000000000000000000000000"
+SEL_RFQS = keccak(b"rfqs(uint256)")[:4].hex()
+SEL_SIGNER = keccak(b"enclaveSigner()")[:4].hex()
+SEL_FXRP = keccak(b"fxrp()")[:4].hex()
+SEL_BAL = keccak(b"balanceOf(address)")[:4].hex()
+SEL_ALLOW = keccak(b"allowance(address,address)")[:4].hex()
 
 ENCLAVE = Account.create()          # key generated in the enclave; never leaves the TEE
 ADDRESS = ENCLAVE.address.lower()
@@ -49,6 +57,22 @@ def _call(to, data):
 def _resolve(name):
     return "0x" + _call(REGISTRY, "0x82760fca" + abi_encode(["string"], [name]).hex())[-40:]
 
+def read_rfq(rfq, rfq_id):
+    out = bytes.fromhex(_call(rfq, "0x" + SEL_RFQS + abi_encode(["uint256"], [rfq_id]).hex())[2:])
+    return ("0x" + out[12:32].hex(), int.from_bytes(out[32:64], "big"),
+            int.from_bytes(out[64:96], "big"), int.from_bytes(out[96:128], "big") != 0)
+
+def rfq_trusts_enclave(rfq):
+    return _call(rfq, "0x" + SEL_SIGNER)[-40:].lower() == ADDRESS[2:]
+
+def read_fxrp(rfq):
+    return "0x" + _call(rfq, "0x" + SEL_FXRP)[-40:]
+
+def mm_can_pay(fxrp, rfq, mm, price):
+    bal = int(_call(fxrp, "0x" + SEL_BAL + abi_encode(["address"], [mm]).hex()), 16)
+    allw = int(_call(fxrp, "0x" + SEL_ALLOW + abi_encode(["address", "address"], [mm, rfq]).hex()), 16)
+    return bal >= price and allw >= price
+
 def xrp_usd_1e18():
     out = bytes.fromhex(_call(_resolve("FtsoV2"),
         "0x93e9f806" + abi_encode(["bytes21"], [bytes.fromhex(XRP_USD_FEED[2:])]).hex())[2:])
@@ -57,12 +81,27 @@ def xrp_usd_1e18():
 def secure_random():
     return int.from_bytes(bytes.fromhex(_call(_resolve("RandomNumberV2"), "0xdbdff2c1")[2:])[:32], "big")
 
-def best_execution(quotes, yt_amount):
-    best = max(int(q["price"]) for q in quotes)
-    tied = [q for q in quotes if int(q["price"]) == best]
-    assert 0 < best < yt_amount, "quote out of economic bound"
-    _ = xrp_usd_1e18()  # oracle-aware: bound already applied; premium priced in USD
-    return (tied[0] if len(tied) == 1 else tied[secure_random() % len(tied)])["mm"], best
+def quote_digest(chain_id, rfq, rfq_id, mm, yt_amount, price, deadline):
+    return keccak(abi_encode(
+        ["string", "uint256", "address", "uint256", "address", "uint256", "uint256", "uint256"],
+        ["AnchorQuote", chain_id, rfq, rfq_id, mm, yt_amount, price, deadline]))
+
+def quote_is_authentic(chain_id, rfq, rfq_id, yt_amount, q):
+    d = quote_digest(chain_id, rfq, rfq_id, q["mm"], yt_amount, int(q["price"]), int(q["deadline"]))
+    try:
+        rec = Account._recover_hash(d, signature=bytes.fromhex(q["sig"][2:]))
+    except Exception:
+        return False
+    return rec.lower() == q["mm"].lower()
+
+def best_execution(quotes, yt_amount, min_price):
+    valid = [q for q in quotes if min_price <= int(q["price"]) < yt_amount]  # reserve floor + sanity ceiling
+    assert valid, "no eligible quote (must be authentic, solvent, and at or above the reserve)"
+    _ = xrp_usd_1e18()  # oracle-aware: quotes are FXRP premiums the enclave can price against XRP/USD
+    best = max(int(q["price"]) for q in valid)
+    tied = [q for q in valid if int(q["price"]) == best]
+    win = tied[0] if len(tied) == 1 else tied[secure_random() % len(tied)]
+    return win["mm"], best, int(win["deadline"])
 
 def sign_settlement(chain_id, rfq, rfq_id, seller, winner, yt_amount, price, deadline):
     digest = keccak(abi_encode(
@@ -86,10 +125,17 @@ class H(BaseHTTPRequestHandler):
         if self.path != "/settle": return self._s(404, {"error": "not found"})
         d = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
         try:
-            winner, price = best_execution(d["quotes"], int(d["ytAmount"]))
-            v, r, s = sign_settlement(int(d["chainId"]), d["rfq"], int(d["rfqId"]), d["seller"],
-                                      winner, int(d["ytAmount"]), price, int(d["deadline"]))
-            self._s(200, {"winner": winner, "price": price, "v": v, "r": r, "s": s})
+            rfq, chain_id, rfq_id = d["rfq"], int(d["chainId"]), int(d["rfqId"])
+            assert rfq_trusts_enclave(rfq), "rfq does not trust this enclave"
+            seller, yt_amount, min_price, is_open = read_rfq(rfq, rfq_id)      # authoritative terms
+            assert is_open, "rfq not open"
+            fxrp = read_fxrp(rfq)
+            auth = [q for q in d["quotes"] if quote_is_authentic(chain_id, rfq, rfq_id, yt_amount, q)]
+            payable = [q for q in auth if mm_can_pay(fxrp, rfq, q["mm"], int(q["price"]))]  # winner can settle
+            winner, price, deadline = best_execution(payable, yt_amount, min_price)
+            v, r, s = sign_settlement(chain_id, rfq, rfq_id, seller, winner, yt_amount, price, deadline)
+            self._s(200, {"seller": seller, "winner": winner, "ytAmount": yt_amount,
+                          "price": price, "deadline": deadline, "v": v, "r": r, "s": s})
         except Exception as e:
             self._s(400, {"error": str(e)})
 

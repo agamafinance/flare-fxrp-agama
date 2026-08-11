@@ -18,6 +18,15 @@ import "./EnclaveRegistry.sol"; // IEnclaveRegistry
  *   key is registered on-chain from its remote attestation) and settles atomically: escrowed YT
  *   to the winning MM, FXRP premium to the seller. The losing quotes never touch the chain.
  *
+ *   Trust model. Two independent guardrails make the open matching endpoint safe:
+ *     1. Each quote is signed by its market maker (see `quoteDigest`); the enclave rejects any quote
+ *        whose signature does not recover to the claimed MM, so no one can fabricate a quote for an
+ *        MM or replay it to another RFQ.
+ *     2. The seller sets a reserve `minPrice` at open time; `settle` enforces `price >= minPrice`
+ *        on-chain, so even a misbehaving enclave cannot sell the YT below the seller's floor.
+ *   The enclave reads seller/ytAmount/minPrice from this contract, not from the caller, so the
+ *   relayer of a settlement cannot alter the RFQ terms.
+ *
  *   POC note: here the enclave is a signer whose key the contract trusts. In production the same
  *   matching code runs in GCP Confidential Space (Intel TDX) and its attestation registers the key.
  */
@@ -29,6 +38,7 @@ contract ConfidentialYtRfq {
     struct Rfq {
         address seller;
         uint256 ytAmount;
+        uint256 minPrice; // seller's reserve: settle rejects any winning price below this
         bool open;
     }
 
@@ -44,7 +54,7 @@ contract ConfidentialYtRfq {
     uint256 public nextId = 1;
     mapping(uint256 => Rfq) public rfqs;
 
-    event RfqOpened(uint256 indexed rfqId, address indexed seller, uint256 ytAmount);
+    event RfqOpened(uint256 indexed rfqId, address indexed seller, uint256 ytAmount, uint256 minPrice);
     event RfqSettled(uint256 indexed rfqId, address indexed seller, address indexed winner, uint256 ytAmount, uint256 price);
     event RfqCancelled(uint256 indexed rfqId);
 
@@ -59,13 +69,25 @@ contract ConfidentialYtRfq {
         return registry.enclaveSigner();
     }
 
-    /// Seller escrows YT and opens a confidential RFQ. MMs then quote off-chain to the enclave.
-    function openRfq(uint256 ytAmount) external returns (uint256 id) {
+    /// Seller escrows YT and opens a confidential RFQ with a reserve price. MMs then quote off-chain.
+    /// The reserve must be positive: minPrice == 0 would let an MM take the YT for nothing.
+    function openRfq(uint256 ytAmount, uint256 minPrice) external returns (uint256 id) {
         require(ytAmount > 0, "amount");
+        require(minPrice > 0, "reserve");
         require(yt.transferFrom(msg.sender, address(this), ytAmount), "yt in");
         id = nextId++;
-        rfqs[id] = Rfq(msg.sender, ytAmount, true);
-        emit RfqOpened(id, msg.sender, ytAmount);
+        rfqs[id] = Rfq(msg.sender, ytAmount, minPrice, true);
+        emit RfqOpened(id, msg.sender, ytAmount, minPrice);
+    }
+
+    /// The digest a market maker signs for a sealed quote. The enclave verifies the MM's signature
+    /// against this exact preimage, so a quote cannot be forged for another MM or replayed elsewhere.
+    function quoteDigest(uint256 rfqId, address mm, uint256 ytAmount, uint256 price, uint256 deadline)
+        public
+        view
+        returns (bytes32)
+    {
+        return keccak256(abi.encode("AnchorQuote", block.chainid, address(this), rfqId, mm, ytAmount, price, deadline));
     }
 
     /// The digest the enclave signs. Bound to this contract and chain to stop replay.
@@ -80,6 +102,7 @@ contract ConfidentialYtRfq {
         Rfq storage q = rfqs[s.rfqId];
         require(q.open, "closed");
         require(q.seller == s.seller && q.ytAmount == s.ytAmount, "mismatch");
+        require(s.price >= q.minPrice, "below reserve");
         require(block.timestamp <= s.deadline, "expired");
         address rec = ecrecover(settlementDigest(s), v, r, sig_s);
         require(rec != address(0) && rec == enclaveSigner(), "bad enclave sig");

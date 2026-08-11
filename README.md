@@ -109,7 +109,15 @@ that key to its image digest, and serves `/attestation` and `/settle`. That real
 verified on chain by `ConfidentialSpaceRegistry` (`test/ConfidentialSpaceGoogle.t.sol` replays it
 against Google's JWKS modulus), registering the enclave key. A full settlement has been run end to
 end on Coston2: sealed quotes to the live enclave, it signs the winner in the TEE, the contract
-verifies that signature and settles (`enclave/settle-via-enclave.sh`).
+verifies that signature and settles (`enclave/e2e_onchain.py`).
+
+**The matching endpoint is safe to expose.** Every quote must be signed by its market maker (the
+enclave rejects any quote whose signature does not recover to the claimed MM, see `quoteDigest`), the
+enclave reads the RFQ terms (seller, ytAmount, reserve) from chain rather than the caller, checks the
+winning MM can actually pay, and the seller's reserve `minPrice` is enforced on-chain in `settle`. So
+a caller can neither forge a quote for someone else nor win below the reserve. `enclave/e2e_onchain.py`
+exercises all three cases live: a forged-for-another-MM quote rejected, a below-reserve quote rejected,
+and the best authentic quote signed by the enclave and settled on chain.
 
 ## Live on Coston2 (chainId 114)
 
@@ -166,10 +174,11 @@ see [`DEPLOY.md`](./DEPLOY.md).
 ## Known limitations (honest status)
 
 - **The enclave runs in a live GCP Confidential Space TDX** and a settlement was verified on chain
-  end to end. The remaining production gap is quote authentication: the demo `/settle` endpoint is
-  open, so it must be caller-restricted and market makers must submit signed/committed quotes before
-  it faces untrusted callers. The VM is a single instance (no HA/redundancy) and uses the debug CS
-  image so the attestation is also visible in the serial log.
+  end to end. Quotes are authenticated (each is signed by its MM), the RFQ terms and the winner's
+  solvency are read from chain, and the seller's reserve is enforced on-chain, so the `/settle`
+  endpoint is safe to expose. The VM is a single instance (no HA/redundancy) and uses the debug CS
+  image so the attestation is also visible in the serial log. A production deployment would add MM
+  authorization/allowlisting and rate limiting on top.
 - **The live Coston2 demo uses a mock yield vault.** There is no real single-asset FXRP yield vault
   on Coston2 (the real ones, e.g. bizFXRP, are on Flare mainnet, which `test/ForkVault.t.sol`
   binds to for deposit). The fixed rate is manufactured by the AMM discount over that mock; the

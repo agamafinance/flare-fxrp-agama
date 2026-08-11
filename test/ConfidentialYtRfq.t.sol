@@ -36,6 +36,7 @@ contract ConfidentialYtRfqTest is Test {
     address mm2 = makeAddr("mm2");
 
     uint256 constant ONE = 1e6; // 6-decimal FXRP
+    uint256 constant RESERVE = 5 * ONE; // seller's floor price for the YT
 
     function setUp() public {
         enclave = vm.addr(ENCLAVE_PK);
@@ -70,7 +71,7 @@ contract ConfidentialYtRfqTest is Test {
     function test_RfqSettlesBestQuoteFromEnclave() public {
         uint256 ytAmount = 1000 * ONE;
         vm.prank(seller);
-        uint256 id = rfq.openRfq(ytAmount);
+        uint256 id = rfq.openRfq(ytAmount, RESERVE);
         assertEq(ytTok.balanceOf(address(rfq)), ytAmount, "YT escrowed");
 
         // Off-chain: mm1 privately quotes 12 FXRP, mm2 quotes 9. The enclave picks mm1 (best for
@@ -98,7 +99,7 @@ contract ConfidentialYtRfqTest is Test {
 
     function test_ForgedSignatureReverts() public {
         vm.prank(seller);
-        uint256 id = rfq.openRfq(1000 * ONE);
+        uint256 id = rfq.openRfq(1000 * ONE, RESERVE);
         ConfidentialYtRfq.Settlement memory s = ConfidentialYtRfq.Settlement({
             rfqId: id, seller: seller, winner: mm1, ytAmount: 1000 * ONE, price: 50 * ONE, deadline: block.timestamp + 1 hours
         });
@@ -109,9 +110,42 @@ contract ConfidentialYtRfqTest is Test {
         rfq.settle(s, v, r, sg);
     }
 
+    /// The seller's reserve is a hard on-chain floor: even a correctly enclave-signed settlement
+    /// below it is rejected. This is the guardrail that makes the open matching endpoint safe.
+    function test_BelowReservePriceReverts() public {
+        vm.prank(seller);
+        uint256 id = rfq.openRfq(1000 * ONE, 10 * ONE);
+        ConfidentialYtRfq.Settlement memory s = ConfidentialYtRfq.Settlement({
+            rfqId: id, seller: seller, winner: mm1, ytAmount: 1000 * ONE, price: 8 * ONE, deadline: block.timestamp + 1 hours
+        });
+        (uint8 v, bytes32 r, bytes32 sg) = _sign(s); // a REAL enclave signature, still below reserve
+        vm.expectRevert(bytes("below reserve"));
+        rfq.settle(s, v, r, sg);
+    }
+
+    /// The exact preimage a market maker signs for a sealed quote is the contract's `quoteDigest`.
+    /// The enclave authenticates a quote by recovering this and checking it equals the claimed MM,
+    /// so a caller cannot fabricate a quote for an MM. This proves the two agree byte-for-byte.
+    function test_QuoteDigestMatchesMmSignature() public view {
+        uint256 mmPk = uint256(keccak256("mm1-signing-key"));
+        address mmAddr = vm.addr(mmPk);
+        bytes32 qd = rfq.quoteDigest(1, mmAddr, 1000 * ONE, 12 * ONE, block.timestamp + 1 hours);
+        (uint8 v, bytes32 r, bytes32 sg) = vm.sign(mmPk, qd);
+        assertEq(ecrecover(qd, v, r, sg), mmAddr, "MM quote signature recovers to the MM");
+        // a different MM address over the same terms yields a different digest (no cross-MM reuse)
+        assertTrue(qd != rfq.quoteDigest(1, address(0xBEEF), 1000 * ONE, 12 * ONE, block.timestamp + 1 hours));
+    }
+
+    /// A zero reserve would let an MM take the YT for nothing, so opening with minPrice == 0 reverts.
+    function test_OpenWithZeroReserveReverts() public {
+        vm.prank(seller);
+        vm.expectRevert(bytes("reserve"));
+        rfq.openRfq(1000 * ONE, 0);
+    }
+
     function test_SellerCanCancelUnsettled() public {
         vm.prank(seller);
-        uint256 id = rfq.openRfq(1000 * ONE);
+        uint256 id = rfq.openRfq(1000 * ONE, RESERVE);
         vm.prank(seller);
         rfq.cancel(id);
         assertEq(ytTok.balanceOf(seller), 1000 * ONE, "seller reclaimed YT");
