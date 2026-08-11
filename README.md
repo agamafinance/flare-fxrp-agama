@@ -143,7 +143,7 @@ Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can tr
 | Live enclave (GCP Confidential Space, **production** Intel TDX) | key `0x06854aA1291CbbDeA01Bc067A01bec73760FF1A8`, image `sha256:8c1ae4d4…0da136` |
 | FtsoReader | `0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f` |
 | FTestXRP (real FAsset, minted from native XRP) | `0x0b6A3645c240605887a5532109323A3E12273dc7` |
-| XrpOnRamp (FDC proof releases FXRP + locks, recipient bound to the XRP memo) | `0x435Aed87c5B350F837aD9Fc2d5e2f8855f1e89F9` |
+| XrpOnRamp (FDC proof releases FXRP + locks, recipient bound to the XRP memo) | `0xd1DABE758Ede40eb7831343E8395dF4ddbC4E55A` |
 
 **On the real asset.** The same stack also runs on the real FAsset FXRP (FTestXRP), not just the demo
 token: Anchor `0x1BEaC6Fa4A0F0F113b31678eE630DF0fE93A2b78`, YT `0x793b671DEbCd2169Ce7Dce8A98d206A9Af2c4592`,
