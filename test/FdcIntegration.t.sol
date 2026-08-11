@@ -39,11 +39,10 @@ contract FdcIntegrationTest is Test {
     function test_XrpOnRamp_RejectsUnattestedDeposit() public {
         XrpOnRamp ramp = new XrpOnRamp(keccak256("agama-xrpl-address"), bytes32("testXRP"), address(0));
         assertGt(address(ramp.relay()).code.length, 0, "gateway wired to the live FDC Relay");
-        // a deposit with no valid FDC attestation is rejected (decode/verify fails)
+        // an unattested proof / unknown voting round does not verify against the live Relay root
         bytes memory empty = "";
         bytes32[] memory noProof = new bytes32[](0);
-        vm.expectRevert();
-        ramp.depositWithXrpProof(empty, noProof, address(this));
+        assertFalse(ramp.verify(empty, noProof, 999999999), "unattested proof must not verify");
     }
 }
 

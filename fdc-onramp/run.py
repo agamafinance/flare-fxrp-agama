@@ -37,10 +37,17 @@ def cast(*args):
 
 def main():
     pk = os.environ["PRIVATE_KEY"]
-    # 1. XRPL wallet
+    # 1. XRPL wallets: a fresh funded payer, and a FIXED (persisted) Agama treasury so its FDC
+    # receivingAddressHash is stable and can be pinned into the on-ramp independently of any one proof.
     acct = requests.post("https://faucet.altnet.rippletest.net/accounts", timeout=30).json()
-    payer = Wallet.from_seed(acct["seed"]); treasury = Wallet.create()
-    print("payer", payer.address, "-> treasury", treasury.address)
+    payer = Wallet.from_seed(acct["seed"])
+    seed_file = os.path.join(os.path.dirname(__file__), "treasury.seed")
+    if os.path.exists(seed_file):
+        treasury = Wallet.from_seed(open(seed_file).read().strip())
+    else:
+        treasury = Wallet.create()
+        open(seed_file, "w").write(treasury.seed)
+    print("payer", payer.address, "-> treasury (fixed)", treasury.address)
     client = JsonRpcClient(XRPL)
     # 2. XRPL payment. The memo is a 32-byte standardPaymentReference = the Flare recipient address
     # left-padded, so the on-ramp can bind the released PT to the payer (not a front-running relayer).

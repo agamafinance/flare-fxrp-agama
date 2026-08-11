@@ -35,10 +35,13 @@ contract ConfidentialYtRfq {
     IERC20 public immutable yt;
     IEnclaveRegistry public immutable registry; // enclave key is attestation-gated, not manually set
 
+    uint256 public constant SETTLE_WINDOW = 15 minutes; // enclave settlement window; cancel only opens after it
+
     struct Rfq {
         address seller;
         uint256 ytAmount;
         uint256 minPrice; // seller's reserve: settle rejects any winning price below this
+        uint256 settleBy; // settle allowed until here; cancel allowed only after, so neither front-runs the other
         bool open;
     }
 
@@ -76,7 +79,7 @@ contract ConfidentialYtRfq {
         require(minPrice > 0, "reserve");
         require(yt.transferFrom(msg.sender, address(this), ytAmount), "yt in");
         id = nextId++;
-        rfqs[id] = Rfq(msg.sender, ytAmount, minPrice, true);
+        rfqs[id] = Rfq(msg.sender, ytAmount, minPrice, block.timestamp + SETTLE_WINDOW, true);
         emit RfqOpened(id, msg.sender, ytAmount, minPrice);
     }
 
@@ -103,6 +106,7 @@ contract ConfidentialYtRfq {
         require(q.open, "closed");
         require(q.seller == s.seller && q.ytAmount == s.ytAmount, "mismatch");
         require(s.price >= q.minPrice, "below reserve");
+        require(block.timestamp <= q.settleBy, "settle window closed"); // bounds the MM's exposure
         require(block.timestamp <= s.deadline, "expired");
         address rec = ecrecover(settlementDigest(s), v, r, sig_s);
         require(rec != address(0) && rec == enclaveSigner(), "bad enclave sig");
@@ -118,6 +122,7 @@ contract ConfidentialYtRfq {
     function cancel(uint256 id) external {
         Rfq storage q = rfqs[id];
         require(q.open && q.seller == msg.sender, "no");
+        require(block.timestamp > q.settleBy, "settle window open"); // cannot front-run a pending settle
         q.open = false;
         require(yt.transfer(msg.sender, q.ytAmount), "yt back");
         emit RfqCancelled(id);

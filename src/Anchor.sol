@@ -3,6 +3,7 @@ pragma solidity ^0.8.25;
 
 import "./YieldSplitter.sol";
 import "./PtAmm.sol";
+import "@prb/math/src/UD60x18.sol";
 
 /**
  * @title Anchor — the user-facing router for the fixed-rate product.
@@ -40,11 +41,19 @@ contract Anchor {
 
     /// One call: deposit FXRP, buy PT at a discount, lock a fixed rate. PT goes to the user.
     function lockFixedRate(uint256 fxrpIn, uint256 minPtOut) external returns (uint256 ptOut) {
-        uint256 aprE18 = amm.impliedApr();
-        fxrp.transferFrom(msg.sender, address(this), fxrpIn);
+        require(fxrp.transferFrom(msg.sender, address(this), fxrpIn), "fxrp in");
         fxrp.approve(address(amm), fxrpIn);
         ptOut = amm.swapFxrpForPt(fxrpIn, minPtOut, msg.sender);
-        emit RateLocked(msg.sender, fxrpIn, ptOut, aprE18);
+        // report the REALIZED rate from the actual fill, not the pre-trade spot (which overstates it)
+        emit RateLocked(msg.sender, fxrpIn, ptOut, _realizedApr(fxrpIn, ptOut));
+    }
+
+    /// APR actually locked: PT redeems 1:1 at maturity, so return = (ptOut/fxrpIn)^(1/T) - 1.
+    function _realizedApr(uint256 fxrpIn, uint256 ptOut) internal view returns (uint256) {
+        UD60x18 T = amm.yearsToMaturity();
+        if (T.unwrap() == 0 || ptOut <= fxrpIn || fxrpIn == 0) return 0;
+        UD60x18 ratio = ud(ptOut * 1e18 / fxrpIn);
+        return ratio.pow(ud(1e18).div(T)).sub(ud(1e18)).unwrap();
     }
 
     /// After maturity: redeem PT 1:1 for FXRP principal. User must approve PT to Anchor first.

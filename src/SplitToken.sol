@@ -72,6 +72,7 @@ contract SplitToken {
     }
 
     function _t(address f, address to, uint256 a) internal {
+        require(to != address(0), "to zero"); // burning is only via burn(); a transfer to 0 would dilute holders
         if (yieldBearing) {
             // settle both at OLD balances, then move, then reset debts at NEW balances
             ISplitterHook(splitter).ytSettle(f);

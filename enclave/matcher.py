@@ -28,17 +28,19 @@ from eth_utils import keccak
 import requests
 
 MAX_QUOTES = 32          # bound the work per request (signature recoveries + solvency reads)
-RATE_MAX, RATE_WINDOW = 30, 10.0   # at most 30 /settle requests per 10s, globally
-_rl_lock, _rl_times = threading.Lock(), []
+MAX_BODY = 64 * 1024     # cap the request body before reading/parsing (anti-DoS)
+RATE_MAX, RATE_WINDOW = 10, 10.0   # at most 10 /settle requests per 10s PER CALLER (not global)
+_rl_lock, _rl = threading.Lock(), {}
 
-def rate_ok():
+def rate_ok(caller):
     now = time.monotonic()
     with _rl_lock:
-        while _rl_times and now - _rl_times[0] > RATE_WINDOW:
-            _rl_times.pop(0)
-        if len(_rl_times) >= RATE_MAX:
+        q = _rl.setdefault(caller, [])
+        while q and now - q[0] > RATE_WINDOW:
+            q.pop(0)
+        if len(q) >= RATE_MAX:
             return False
-        _rl_times.append(now)
+        q.append(now)
         return True
 
 RPC = os.environ.get("COSTON2_RPC", "https://coston2-api.flare.network/ext/C/rpc")
@@ -72,9 +74,10 @@ def _resolve(name):
     return "0x" + _call(REGISTRY, "0x82760fca" + abi_encode(["string"], [name]).hex())[-40:]
 
 def read_rfq(rfq, rfq_id):
+    # struct Rfq { address seller; uint256 ytAmount; uint256 minPrice; uint256 settleBy; bool open; }
     out = bytes.fromhex(_call(rfq, "0x" + SEL_RFQS + abi_encode(["uint256"], [rfq_id]).hex())[2:])
     return ("0x" + out[12:32].hex(), int.from_bytes(out[32:64], "big"),
-            int.from_bytes(out[64:96], "big"), int.from_bytes(out[96:128], "big") != 0)
+            int.from_bytes(out[64:96], "big"), int.from_bytes(out[128:160], "big") != 0)
 
 def rfq_trusts_enclave(rfq):
     return _call(rfq, "0x" + SEL_SIGNER)[-40:].lower() == ADDRESS[2:]
@@ -100,14 +103,17 @@ def xrp_usd_1e18():
     out = bytes.fromhex(_call(_resolve("FtsoV2"),
         "0x93e9f806" + abi_encode(["bytes21"], [bytes.fromhex(XRP_USD_FEED[2:])]).hex())[2:])
     value = int.from_bytes(out[:32], "big")
-    px = value * 10**18 // (10 ** int.from_bytes(out[32:64], "big"))
+    dec = int.from_bytes(out[32:64], "big", signed=True)  # FtsoV2 decimals is a signed int8
+    px = value * 10**18 * 10**(-dec) if dec < 0 else value * 10**18 // (10 ** dec)
     ts = int.from_bytes(out[64:96], "big")
     assert value > 0 and MIN_XRP_USD_1E18 <= px <= MAX_XRP_USD_1E18, "xrp/usd feed out of range"
     assert latest_block_ts() - ts <= MAX_FEED_AGE, "stale xrp/usd feed"  # freshness guard
     return px
 
 def secure_random():
-    return int.from_bytes(bytes.fromhex(_call(_resolve("RandomNumberV2"), "0xdbdff2c1")[2:])[:32], "big")
+    out = bytes.fromhex(_call(_resolve("RandomNumberV2"), "0xdbdff2c1")[2:])  # (randomNumber, isSecure, ts)
+    assert int.from_bytes(out[32:64], "big") == 1, "Flare RNG not secure this round"
+    return int.from_bytes(out[:32], "big")
 
 def quote_digest(chain_id, rfq, rfq_id, mm, yt_amount, price, deadline):
     return keccak(abi_encode(
@@ -133,9 +139,11 @@ def premium_usd_1e6(price, xrp_usd):
 
 def choose_winner(quotes, yt_amount, min_price, fxrp, rfq):
     xrp_usd = xrp_usd_1e18()  # FTSO XRP/USD: the premium is bounded in real USD terms, not just tokens
+    # per-settlement USD cap, but never below the seller's reserve (a high reserve must not be bricked)
+    cap = max(MAX_PREMIUM_USD_1E6, 2 * premium_usd_1e6(min_price, xrp_usd))
     def eligible(p):
         u = premium_usd_1e6(p, xrp_usd)
-        return min_price <= p < yt_amount and MIN_PREMIUM_USD_1E6 <= u <= MAX_PREMIUM_USD_1E6
+        return min_price <= p < yt_amount and MIN_PREMIUM_USD_1E6 <= u <= cap
     valid = [q for q in quotes if eligible(int(q["price"]))]
     assert valid, "no eligible quote (authentic, at/above reserve, within the FTSO USD band)"
     rnd = secure_random()  # fair tie-break among equal top prices (Flare Secure RNG)
@@ -165,8 +173,10 @@ class H(BaseHTTPRequestHandler):
         else: self._s(404, {"error": "not found"})
     def do_POST(self):
         if self.path != "/settle": return self._s(404, {"error": "not found"})
-        if not rate_ok(): return self._s(429, {"error": "rate limited"})
-        d = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+        if not rate_ok(self.client_address[0]): return self._s(429, {"error": "rate limited"})  # per-caller
+        length = int(self.headers.get("Content-Length", 0))
+        if length > MAX_BODY: return self._s(413, {"error": "request too large"})
+        d = json.loads(self.rfile.read(length))
         try:
             quotes = d["quotes"]
             assert len(quotes) <= MAX_QUOTES, "too many quotes"               # bound the work per request

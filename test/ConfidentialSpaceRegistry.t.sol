@@ -90,4 +90,28 @@ contract ConfidentialSpaceRegistryTest is Test {
         vm.expectRevert(bytes("not Intel TDX"));
         r.registerEnclave(h, p, sg, enc);
     }
+
+    /// The headline critical: a debug + non-TDX + wrong-image enclave that injects the approved claim
+    /// strings as `submods.container.env` keys would pass a raw substring scan. The exact-path parser
+    /// reads the real top-level claims and rejects it.
+    function test_RejectsSubstringInjection() public {
+        (ConfidentialSpaceRegistry r, bytes memory h, bytes memory p, bytes memory sg, address enc) =
+            _load("test/vectors/cs_attestation_injection.json");
+        vm.expectRevert(bytes("not Intel TDX")); // real top-level hwmodel is AMD SEV, not the injected env value
+        r.registerEnclave(h, p, sg, enc);
+    }
+
+    /// Only the owner may register, so a leaked/stale token cannot be replayed to roll the key.
+    function test_RejectsNonOwnerRegistration() public {
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(bytes("only owner"));
+        reg.registerEnclave(header, payload, sig, enclave);
+    }
+
+    /// The same token cannot be replayed (one-time), preventing key rollback.
+    function test_RejectsTokenReplay() public {
+        reg.registerEnclave(header, payload, sig, enclave);
+        vm.expectRevert(bytes("token replayed"));
+        reg.registerEnclave(header, payload, sig, enclave);
+    }
 }

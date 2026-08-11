@@ -146,8 +146,19 @@ contract ConfidentialYtRfqTest is Test {
     function test_SellerCanCancelUnsettled() public {
         vm.prank(seller);
         uint256 id = rfq.openRfq(1000 * ONE, RESERVE);
+        vm.warp(block.timestamp + rfq.SETTLE_WINDOW() + 1); // cancel only opens after the settle window
         vm.prank(seller);
         rfq.cancel(id);
         assertEq(ytTok.balanceOf(seller), 1000 * ONE, "seller reclaimed YT");
+    }
+
+    /// The seller cannot front-run a pending enclave-signed settlement with cancel(): cancel is only
+    /// allowed after the settle window, so the two never race.
+    function test_CannotCancelDuringSettleWindow() public {
+        vm.prank(seller);
+        uint256 id = rfq.openRfq(1000 * ONE, RESERVE);
+        vm.prank(seller);
+        vm.expectRevert(bytes("settle window open"));
+        rfq.cancel(id);
     }
 }

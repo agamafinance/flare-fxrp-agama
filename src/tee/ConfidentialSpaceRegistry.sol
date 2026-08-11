@@ -3,6 +3,7 @@ pragma solidity ^0.8.25;
 
 import "../rsa/RsaVerify.sol";
 import "../EnclaveRegistry.sol"; // IEnclaveRegistry
+import "./JsonLite.sol";
 
 /// base64url decoder (RFC 4648, no padding), for JWT payloads.
 library Base64URL {
@@ -49,27 +50,25 @@ library Base64URL {
  *         attestation flow (per Flare's Confidential Compute docs).
  *
  *   The enclave (running in Intel TDX Confidential Space) generates a signing key and requests an
- *   attestation OIDC token whose `eat_nonce` carries that key. Google's Confidential Space signer
- *   returns an RS256 JWT with claims including `iss`, `submods.container.image_digest`, `hwmodel`
- *   and the `eat_nonce`. This contract verifies that JWT on chain: RS256 against Google's real
- *   attestation public key, then requires the token to carry the approved code image digest and
- *   bind the presented enclave key. Only then is the key registered. `ConfidentialYtRfq` reads it.
- *
- *   Set the attester modulus to Google's JWKS key (the confidentialspace-sign service account).
- *   This POC uses a test key so the flow is verifiable end to end without a GCP deployment; the
- *   enclave workload is in ../../enclave.
+ *   attestation OIDC token whose `eat_nonce` carries that key. This contract verifies that JWT on
+ *   chain: RS256 against Google's confidentialspace-sign key, then it decodes the payload and reads
+ *   each claim AT ITS EXACT JSON PATH (JsonLite, not a substring scan) so a debug / non-TDX /
+ *   wrong-image workload cannot forge claims by injecting `submods.container.env` keys. It requires a
+ *   non-debuggable production Intel TDX enclave running the approved image, a non-expired token, and
+ *   is owner-gated and one-time per token so a stale/leaked token cannot be replayed to roll the key.
  */
 contract ConfidentialSpaceRegistry is IEnclaveRegistry {
     bytes public attesterModulus; // Google CS signer RSA modulus (JWKS `n`)
     bytes public attesterExponent; // 0x010001
     bytes public expectedImageDigest; // approved container image digest, e.g. "sha256:..."
     address public enclaveSigner; // registered enclave key
-    bytes constant ISSUER = '"iss":"https://confidentialcomputing.googleapis.com"';
-    // A settlement is only trustworthy if it was signed inside a real, non-debuggable Intel TDX
-    // Confidential Space enclave. These claims come straight from Google's attestation token.
-    bytes constant HWMODEL = '"hwmodel":"GCP_INTEL_TDX"';
-    bytes constant SWNAME = '"swname":"CONFIDENTIAL_SPACE"';
-    bytes constant NODEBUG = '"dbgstat":"disabled-since-boot"'; // production CS value; debug is "enabled"
+    address public owner; // only the owner may (re)register, so a replayed token cannot roll the key
+    mapping(bytes32 => bool) public usedToken; // one-time per attestation token
+
+    bytes constant ISSUER = "https://confidentialcomputing.googleapis.com";
+    bytes constant HWMODEL = "GCP_INTEL_TDX";
+    bytes constant SWNAME = "CONFIDENTIAL_SPACE";
+    bytes constant NODEBUG = "disabled-since-boot"; // production; a debug enclave reports "enabled"
 
     event EnclaveRegistered(address indexed enclaveSigner, bytes imageDigest);
 
@@ -77,45 +76,51 @@ contract ConfidentialSpaceRegistry is IEnclaveRegistry {
         attesterModulus = _modulus;
         attesterExponent = _exponent;
         expectedImageDigest = _expectedImageDigest;
+        owner = msg.sender;
     }
 
-    /// Register the enclave key from a Confidential Space attestation JWT (header.payload.signature
-    /// passed as its three base64url parts). `claimedKey` must appear as the token's eat_nonce.
+    /// Register the enclave key from a Confidential Space attestation JWT (its three base64url parts).
+    /// `claimedKey` must be the token's eat_nonce. Owner-only, one-time per token, non-expired.
     function registerEnclave(bytes calldata headerB64, bytes calldata payloadB64, bytes calldata signature, address claimedKey)
         external
     {
-        // 1. RS256: verify Google's signature over the JWT signing input
+        require(msg.sender == owner, "only owner");
+
+        // 1. RS256: verify Google's signature over the JWT signing input (payload is well-formed after)
         bytes memory signingInput = bytes.concat(headerB64, ".", payloadB64);
         require(RsaVerify.verify(signingInput, signature, attesterExponent, attesterModulus), "bad attestation signature");
 
-        // 2. decode the payload and check the claims
-        bytes memory payload = Base64URL.decode(payloadB64);
-        require(_contains(payload, ISSUER), "issuer not Confidential Space");
-        require(_contains(payload, bytes.concat('"image_digest":"', expectedImageDigest, '"')), "unexpected enclave image");
-        // real, non-debuggable Intel TDX Confidential Space, otherwise the operator could read/forge
-        require(_contains(payload, HWMODEL), "not Intel TDX");
-        require(_contains(payload, SWNAME), "not Confidential Space");
-        require(_contains(payload, NODEBUG), "debug enclave not allowed");
-        // the enclave key must be exactly the token's eat_nonce value (not merely present somewhere)
-        require(_contains(payload, bytes.concat('"eat_nonce":"', _toHex(claimedKey), '"')), "enclave key not the eat_nonce");
+        // 2. one-time: a stale/leaked token cannot be replayed to roll the enclave key back
+        bytes32 tokenId = keccak256(signature);
+        require(!usedToken[tokenId], "token replayed");
+        usedToken[tokenId] = true;
+
+        // 3. read each claim at its EXACT path (never a global substring scan)
+        bytes memory p = Base64URL.decode(payloadB64);
+        uint256 n = p.length;
+        require(_topEq(p, n, "iss", ISSUER), "issuer not Confidential Space");
+        require(_topEq(p, n, "hwmodel", HWMODEL), "not Intel TDX");
+        require(_topEq(p, n, "swname", SWNAME), "not Confidential Space");
+        require(_topEq(p, n, "dbgstat", NODEBUG), "debug enclave not allowed");
+        require(_topEq(p, n, "eat_nonce", _toHex(claimedKey)), "enclave key not the eat_nonce");
+
+        // 4. freshness: reject an expired token
+        (uint256 xs, uint256 xe) = JsonLite.get(p, 0, n, "exp");
+        require(JsonLite.toUint(p, xs, xe) > block.timestamp, "attestation expired");
+
+        // 5. approved image at submods.container.image_digest (exact path, so env keys cannot spoof it)
+        (uint256 ss, uint256 se) = JsonLite.get(p, 0, n, "submods");
+        (uint256 cs, uint256 ce) = JsonLite.get(p, ss, se, "container");
+        (uint256 is0, uint256 ie) = JsonLite.get(p, cs, ce, "image_digest");
+        require(JsonLite.equals(p, is0, ie, expectedImageDigest), "unexpected enclave image");
 
         enclaveSigner = claimedKey;
         emit EnclaveRegistered(claimedKey, expectedImageDigest);
     }
 
-    function _contains(bytes memory h, bytes memory n) private pure returns (bool) {
-        if (n.length > h.length) return false;
-        for (uint256 i = 0; i + n.length <= h.length; i++) {
-            bool m = true;
-            for (uint256 j = 0; j < n.length; j++) {
-                if (h[i + j] != n[j]) {
-                    m = false;
-                    break;
-                }
-            }
-            if (m) return true;
-        }
-        return false;
+    function _topEq(bytes memory p, uint256 n, bytes memory key, bytes memory val) private pure returns (bool) {
+        (uint256 vs, uint256 ve) = JsonLite.get(p, 0, n, key);
+        return JsonLite.equals(p, vs, ve, val);
     }
 
     function _toHex(address a) private pure returns (bytes memory) {

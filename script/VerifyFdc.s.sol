@@ -23,9 +23,6 @@ contract VerifyFdc is Script {
         console2.logBytes32(resp.requestBody.transactionId);
         bool ok = ramp.verify(attestedResponse, merkleProof, resp.votingRound);
         console2.log("verify(REAL FDC attestation vs live Relay root) =", ok);
-
-        uint256 drops = ramp.depositWithXrpProof(attestedResponse, merkleProof, address(0xBEEF));
-        console2.log("credited drops           =", drops);
-        console2.log("credited[recipient]      =", ramp.credited(address(0xBEEF)));
+        console2.log("received drops           =", uint256(resp.responseBody.receivedAmount));
     }
 }

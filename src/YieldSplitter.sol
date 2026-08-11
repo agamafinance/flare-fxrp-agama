@@ -52,11 +52,11 @@ contract YieldSplitter is ISplitterHook {
 
     function _updateGlobal() internal {
         uint256 cur = _currentYieldTotal();
+        if (cur <= lastYieldTotal) return; // never ratchet down: a share-price dip must not re-count on recovery
         uint256 supply = yt.totalSupply();
-        if (supply > 0 && cur > lastYieldTotal) {
-            accYieldPerYT += ((cur - lastYieldTotal) * 1e18) / supply;
-        }
-        lastYieldTotal = cur;
+        if (supply == 0) return; // no YT holders yet: defer this band instead of advancing past it (not stranded)
+        accYieldPerYT += ((cur - lastYieldTotal) * 1e18) / supply;
+        lastYieldTotal = cur; // advance only once the band is actually distributed
     }
 
     function _accrue(address user) internal {

@@ -76,57 +76,60 @@ contract PtAmm {
 
     /* -------------------------------- liquidity ------------------------------ */
 
+    /// Pull `amt` of a token in, checking the transfer succeeded and crediting the MEASURED delta.
+    /// Fee-on-transfer tokens (which would under-collateralize the pool) are rejected.
+    function _pull(IERC20Min t, address from, uint256 amt) internal returns (uint256 got) {
+        uint256 b0 = t.balanceOf(address(this));
+        require(t.transferFrom(from, address(this), amt), "transfer in");
+        got = t.balanceOf(address(this)) - b0;
+        require(got == amt, "fee-on-transfer unsupported");
+    }
+
     function addLiquidity(uint256 dxFxrp, uint256 dyPt) external {
-        fxrp.transferFrom(msg.sender, address(this), dxFxrp);
-        pt.transferFrom(msg.sender, address(this), dyPt);
-        fxrpReserve += dxFxrp;
-        ptReserve += dyPt;
+        fxrpReserve += _pull(fxrp, msg.sender, dxFxrp);
+        ptReserve += _pull(pt, msg.sender, dyPt);
         emit Liquidity(dxFxrp, dyPt);
     }
 
     /* --------------------------------- swaps --------------------------------- */
 
-    /// Read-only quote: PT received for `dxIn` FXRP at the current state (for front-ends).
+    /// Read-only quote: PT received for `dxIn` FXRP at the current state (for front-ends). Rounds the
+    /// output DOWN (reserve retained rounded up), matching swapFxrpForPt so the quote is not optimistic.
     function previewFxrpForPt(uint256 dxIn) public view returns (uint256 dyOut) {
         UD60x18 a = _a();
-        UD60x18 x = _xN();
-        UD60x18 y = _yN();
-        UD60x18 rhs = x.pow(a).add(y.pow(a)).sub(x.add(ud(dxIn * SCALE_X)).pow(a));
-        dyOut = ptReserve - rhs.pow(ud(1e18).div(a)).unwrap() / SCALE_Y;
+        UD60x18 rhs = _xN().pow(a).add(_yN().pow(a)).sub(_xN().add(ud(dxIn * SCALE_X)).pow(a));
+        uint256 yNewTokens = (rhs.pow(ud(1e18).div(a)).unwrap() + SCALE_Y - 1) / SCALE_Y; // ceil -> output rounds down
+        dyOut = ptReserve - yNewTokens;
     }
 
     /// Swap exact FXRP in for PT out. This is how a user LOCKS a fixed rate.
     function swapFxrpForPt(uint256 dxIn, uint256 minPtOut, address to) external returns (uint256 dyOut) {
         UD60x18 a = _a();
-        UD60x18 x = _xN();
-        UD60x18 y = _yN();
         // solve (x+dx)^a + (y-dy)^a = x^a + y^a  ->  (y-dy) = ( x^a + y^a - (x+dx)^a )^(1/a)
-        UD60x18 rhs = x.pow(a).add(y.pow(a)).sub(x.add(ud(dxIn * SCALE_X)).pow(a));
-        UD60x18 yNew = rhs.pow(ud(1e18).div(a));
-        dyOut = ptReserve - yNew.unwrap() / SCALE_Y; // back to PT token units
+        UD60x18 rhs = _xN().pow(a).add(_yN().pow(a)).sub(_xN().add(ud(dxIn * SCALE_X)).pow(a));
+        uint256 yNewTokens = (rhs.pow(ud(1e18).div(a)).unwrap() + SCALE_Y - 1) / SCALE_Y; // retain rounded UP (pool favor)
+        dyOut = ptReserve - yNewTokens;
         require(dyOut >= minPtOut, "slippage");
         require(dyOut < ptReserve, "insufficient liquidity");
-        fxrp.transferFrom(msg.sender, address(this), dxIn);
-        pt.transfer(to, dyOut);
+        _pull(fxrp, msg.sender, dxIn);
         fxrpReserve += dxIn;
         ptReserve -= dyOut;
+        require(pt.transfer(to, dyOut), "pt out");
         emit Swap(msg.sender, true, dxIn, dyOut);
     }
 
     /// Swap exact PT in for FXRP out.
     function swapPtForFxrp(uint256 dyIn, uint256 minFxrpOut, address to) external returns (uint256 dxOut) {
         UD60x18 a = _a();
-        UD60x18 x = _xN();
-        UD60x18 y = _yN();
-        UD60x18 rhs = x.pow(a).add(y.pow(a)).sub(y.add(ud(dyIn * SCALE_Y)).pow(a));
-        UD60x18 xNew = rhs.pow(ud(1e18).div(a));
-        dxOut = fxrpReserve - xNew.unwrap() / SCALE_X; // back to FXRP token units
+        UD60x18 rhs = _xN().pow(a).add(_yN().pow(a)).sub(_yN().add(ud(dyIn * SCALE_Y)).pow(a));
+        uint256 xNewTokens = (rhs.pow(ud(1e18).div(a)).unwrap() + SCALE_X - 1) / SCALE_X; // retain rounded UP (pool favor)
+        dxOut = fxrpReserve - xNewTokens;
         require(dxOut >= minFxrpOut, "slippage");
         require(dxOut < fxrpReserve, "insufficient liquidity");
-        pt.transferFrom(msg.sender, address(this), dyIn);
-        fxrp.transfer(to, dxOut);
+        _pull(pt, msg.sender, dyIn);
         ptReserve += dyIn;
         fxrpReserve -= dxOut;
+        require(fxrp.transfer(to, dxOut), "fxrp out");
         emit Swap(msg.sender, false, dyIn, dxOut);
     }
 
@@ -142,7 +145,8 @@ contract PtAmm {
     function impliedApr() external view returns (uint256) {
         UD60x18 T = yearsToMaturity();
         if (T.unwrap() == 0) return 0;
-        UD60x18 P = ud(ptPrice());
-        return ud(1e18).div(P).pow(ud(1e18).div(T)).sub(ud(1e18)).unwrap();
+        uint256 P = ptPrice();
+        if (P >= 1e18) return 0; // PT at/above par (premium): implied rate <= 0, clamp instead of reverting
+        return ud(1e18).div(ud(P)).pow(ud(1e18).div(T)).sub(ud(1e18)).unwrap();
     }
 }

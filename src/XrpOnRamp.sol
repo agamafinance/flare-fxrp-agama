@@ -19,33 +19,33 @@ interface IERC20Onramp {
  * @title XrpOnRamp
  * @notice Native-XRP on-ramp for Agama, using the Flare Data Connector (FDC).
  *
- *   A user pays XRP on the XRPL to Agama's deposit address. An FDC "Payment" attestation proves
- *   that transfer; this contract verifies the attested response against the enshrined FDC Merkle
- *   root on the Relay (protocol id 200), then releases FXRP from its liquidity and, in one call,
- *   locks the fixed rate through Anchor (`depositAndLock`) so the PT goes straight to the payer.
- *   No FXRP moves without a real, proven XRP payment: the FDC proof is the gate.
+ *   A user pays XRP on the XRPL to Agama's deposit address, with a 32-byte memo carrying the Flare
+ *   recipient. An FDC "Payment" attestation proves that transfer; this contract verifies it against
+ *   the enshrined FDC Merkle root on the Relay (protocol id 200), then `depositAndLock` releases the
+ *   matching FXRP and locks the fixed rate through Anchor in one call, sending the PT to the recipient
+ *   named in the memo (standardPaymentReference). There is a single, recipient-bound, one-time
+ *   settlement path: no FXRP moves without a real proof, the PT can only go to the payer, and the
+ *   relayer cannot pick the slippage bound (the contract enforces a floor) or burn the deposit.
  *
- *   The leaf is keccak256 of the exact attested response bytes (as the FDC Data Availability layer
- *   commits them); the same bytes are decoded for the business fields. Verified end to end against
- *   a real XRPL testnet payment and its live FDC attestation. POC, unaudited.
+ *   The leaf is keccak256 of the exact attested response bytes; the same bytes are decoded for the
+ *   business fields. Verified end to end against a real XRPL testnet payment. POC, unaudited.
  */
 contract XrpOnRamp {
     uint256 public constant FDC_PROTOCOL_ID = 200;
     bytes32 public constant ATT_PAYMENT = bytes32("Payment"); // FDC "Payment" attestation type
     uint8 public constant STATUS_SUCCESS = 0; // Payment status 0 = success
+    uint256 public constant MIN_RATE_BPS = 9800; // PT out floor: >= 98% of 1:1, a coarse anti-sandwich bound
 
     IRelay public immutable relay;
-    bytes32 public immutable treasuryAddressHash; // FDC hash of Agama's XRPL receiving address
+    bytes32 public immutable treasuryAddressHash; // FDC hash of Agama's XRPL receiving address (pinned)
     bytes32 public immutable expectedSourceId; // e.g. bytes32("testXRP") on Coston2, bytes32("XRP") on mainnet
 
-    IAnchorLock public immutable anchor; // fixed-rate router (optional; enables depositAndLock)
+    IAnchorLock public immutable anchor; // fixed-rate router
     IERC20Onramp public immutable fxrp; // FXRP liquidity released against a proven XRP payment
     IERC20Onramp public immutable pt; // PT forwarded to the payer after the lock
 
     mapping(bytes32 => bool) public usedTx; // replay protection by XRPL transaction id
-    mapping(address => uint256) public credited; // Flare user -> XRP drops proven in
 
-    event XrpDeposited(address indexed user, uint256 amountDrops, bytes32 indexed xrplTxId, uint8 status);
     event XrpLocked(address indexed user, uint256 amountDrops, uint256 ptOut, bytes32 indexed xrplTxId);
 
     constructor(bytes32 _treasuryAddressHash, bytes32 _expectedSourceId, address _anchor) {
@@ -59,7 +59,8 @@ contract XrpOnRamp {
         }
     }
 
-    /// Verify attested response bytes against the finalized FDC Merkle root on the Relay.
+    /// Verify attested response bytes against the finalized FDC Merkle root on the Relay (view, so
+    /// relayers and tests can check a proof without consuming it).
     function verify(bytes calldata attestedResponse, bytes32[] calldata merkleProof, uint256 votingRound)
         public
         view
@@ -75,11 +76,14 @@ contract XrpOnRamp {
         return node == root;
     }
 
-    /// Shared FDC checks: prove a successful native-XRP payment to Agama's address, once.
-    function _proveXrpPayment(bytes calldata attestedResponse, bytes32[] calldata merkleProof)
-        internal
-        returns (uint256 amountDrops, bytes32 txId)
+    /// Prove a native-XRP payment to Agama's treasury, release the matching FXRP, and lock the fixed
+    /// rate through Anchor. The PT goes to the recipient named in the XRP memo, not the caller, so a
+    /// relayer that front-runs a public proof can neither steal nor grief the deposit.
+    function depositAndLock(bytes calldata attestedResponse, bytes32[] calldata merkleProof)
+        external
+        returns (uint256 ptOut)
     {
+        require(address(anchor) != address(0), "no anchor");
         Payment.Response memory data = abi.decode(attestedResponse, (Payment.Response));
         require(verify(attestedResponse, merkleProof, data.votingRound), "invalid FDC payment proof");
         require(data.attestationType == ATT_PAYMENT, "not a Payment attestation");
@@ -87,43 +91,24 @@ contract XrpOnRamp {
         require(data.responseBody.status == STATUS_SUCCESS, "payment not successful");
         require(data.responseBody.receivingAddressHash == treasuryAddressHash, "wrong receiver");
 
-        txId = data.requestBody.transactionId;
+        // the recipient is the payer's Flare address, carried in the XRP memo (standardPaymentReference)
+        address to = address(uint160(uint256(data.responseBody.standardPaymentReference)));
+        require(to != address(0), "no recipient in memo");
+
+        bytes32 txId = data.requestBody.transactionId;
         require(!usedTx[txId], "already claimed");
         usedTx[txId] = true;
 
         int256 received = data.responseBody.receivedAmount;
         require(received > 0, "no amount");
-        amountDrops = uint256(received); // XRP drops are 6 decimals, same as FXRP
-    }
-
-    /// Prove a native-XRP payment and credit `to` (drops recorded; no FXRP released).
-    function depositWithXrpProof(bytes calldata attestedResponse, bytes32[] calldata merkleProof, address to)
-        external
-        returns (uint256 amountDrops)
-    {
-        bytes32 txId;
-        (amountDrops, txId) = _proveXrpPayment(attestedResponse, merkleProof);
-        credited[to] += amountDrops;
-        emit XrpDeposited(to, amountDrops, txId, STATUS_SUCCESS);
-    }
-
-    /// Prove a native-XRP payment, release the matching FXRP from this on-ramp's liquidity, and lock
-    /// the fixed rate through Anchor in one call. The PT (certainty) goes straight to `to`.
-    function depositAndLock(bytes calldata attestedResponse, bytes32[] calldata merkleProof, uint256 minPtOut, address to)
-        external
-        returns (uint256 ptOut)
-    {
-        require(address(anchor) != address(0), "no anchor");
-        Payment.Response memory data = abi.decode(attestedResponse, (Payment.Response));
-        // the payer names their Flare recipient in the XRP memo (standardPaymentReference); bind the
-        // PT to it so a relayer front-running a public proof cannot redirect it to themselves
-        require(data.responseBody.standardPaymentReference == bytes32(uint256(uint160(to))), "recipient not the payer");
-        (uint256 amountDrops, bytes32 txId) = _proveXrpPayment(attestedResponse, merkleProof);
+        uint256 amountDrops = uint256(received); // XRP drops are 6 decimals, same as FXRP
         require(fxrp.balanceOf(address(this)) >= amountDrops, "onramp out of FXRP");
 
+        // the contract, not the relayer, sets the slippage floor, bounding AMM-sandwich MEV
+        uint256 minPtOut = amountDrops * MIN_RATE_BPS / 10000;
         fxrp.approve(address(anchor), amountDrops);
         ptOut = anchor.lockFixedRate(amountDrops, minPtOut); // PT is minted to this contract
-        pt.transfer(to, ptOut); // forward the locked PT to the payer
+        require(pt.transfer(to, ptOut), "pt out"); // forward the locked PT to the payer
         emit XrpLocked(to, amountDrops, ptOut, txId);
     }
 }
