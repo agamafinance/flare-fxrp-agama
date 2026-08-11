@@ -18,10 +18,10 @@ from eth_utils import keccak
 RPC = os.environ.get("RPC", "https://coston2-api.flare.network/ext/C/rpc")
 EXPLORER = "https://coston2-explorer.flare.network"
 CHAIN = 114
-ENCLAVE_URL = os.environ.get("ENCLAVE_URL", "http://104.155.152.64:8080")
-RFQ = os.environ.get("RFQ", "0x5FAEC4B63c1dE7170C02f6722f927e36cdb97f11")
-FXRP = os.environ.get("FXRP", "0x03fDE303879d8B366ef384b9Be2F6276A27FCD62")
-YT = os.environ.get("YT", "0xA84437A6CAEeeAB1eB208e6E686a761A0B7cDa1d")
+ENCLAVE_URL = os.environ.get("ENCLAVE_URL", "http://34.59.74.87:8080")
+RFQ = os.environ.get("RFQ", "0xde8b54126782141a2Cb5Fcd2331f1e9286764E01")
+FXRP = os.environ.get("FXRP", "0x45a0ED01D31dAd226ba26B448f43BFDfD1d0fb6f")
+YT = os.environ.get("YT", "0xF749F4C6451739fb9e69C59203c2FB88a750bdE1")
 PK = os.environ["PRIVATE_KEY"]
 SELLER = subprocess.run(["cast", "wallet", "address", "--private-key", PK], capture_output=True, text=True).stdout.strip()
 ONE = 1_000_000

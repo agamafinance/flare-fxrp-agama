@@ -38,7 +38,7 @@ nears, the YieldSpace curve flattens to constant-sum and PT converges to par mec
 | `PtAmm.sol` | A real YieldSpace AMM (`x^(1-t) + y^(1-t) = k`) for PT vs FXRP, decimals-aware (real FXRP is 6 decimals), PRBMath fixed point. Buying PT locks a fixed rate. |
 | `Anchor.sol` | The user-facing router. One call to lock a fixed rate, a quote for the front, and 1:1 redemption at maturity. |
 | `ConfidentialYtRfq.sol` | The confidential YT demand side. Market makers quote privately inside a TEE; the enclave signs only the winning settlement, which this contract verifies (against the attestation-gated key) and executes. |
-| `tee/ConfidentialSpaceRegistry.sol` + `rsa/RsaVerify.sol` | Attestation-gated enclave key, following the real GCP Confidential Space flow. Verifies a Confidential Space attestation **JWT** on chain: RS256 (via the modexp precompile) against Google's signer key, then base64url-decodes the payload and requires the approved `image_digest` and the presented enclave key as the token `eat_nonce`. `EnclaveRegistry.sol` is a simpler RS256-over-a-statement variant. |
+| `tee/ConfidentialSpaceRegistry.sol` + `rsa/RsaVerify.sol` | Attestation-gated enclave key, following the real GCP Confidential Space flow. Verifies a Confidential Space attestation **JWT** on chain: RS256 (via the modexp precompile) against Google's signer key, then reads each claim at its **exact JSON path** (`tee/JsonLite.sol`, not a substring scan, so operator-controlled `env`/label keys cannot spoof a claim) and requires a non-debuggable production Intel TDX enclave running the approved image. Owner-gated, one-time per token, and expiry-checked. `EnclaveRegistry.sol` is a simpler RS256-over-a-statement variant. |
 | `FtsoReader.sol` | Reads the enshrined FTSOv2 oracle to denominate FXRP positions in USD (front and enclave). |
 | `XrpOnRamp.sol` + `fdc/IFdc.sol` | Native-XRP on-ramp: verifies an FDC Payment proof against the enshrined FdcVerification, so real XRP from the XRPL is credited on Flare with no bridge trust. |
 | `interfaces/IERC4626.sol` | The standard vault surface the splitter codes against, so a real vault is a one-line swap. |
@@ -58,7 +58,7 @@ Agama uses five of Flare's enshrined protocols, each doing real work, not a supe
 
 ## Proven
 
-`forge test` runs **27 tests, all green**, including:
+`forge test` runs **37 tests, all green**, including:
 
 - The full lifecycle: split, YT captures the yield, PT redeems principal 1:1.
 - Sell YT to lock certainty; the yield accounting splits correctly on transfer.
@@ -131,16 +131,16 @@ Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can tr
 
 | Contract | Address |
 | --- | --- |
-| Anchor | `0xE9F6e7089BbedFe2DCC132B7Cf6301062E9D2aFa` |
-| FXRP (demo) | `0x03fDE303879d8B366ef384b9Be2F6276A27FCD62` |
-| Vault | `0x7d5398e5A0660A422953A80DB6cb0af351E08938` |
-| YieldSplitter | `0xB19b27da53c8c6C9c4fF85050a77BCa7A2fdeC3E` |
-| PT | `0x31B1FA947C2b332DA7b348C9421d3C608E3f1E93` |
-| YT | `0xA84437A6CAEeeAB1eB208e6E686a761A0B7cDa1d` |
-| PtAmm | `0x541fe9998696EEb7Fb66C9058CA7Cc263670fa31` |
-| ConfidentialYtRfq (signed quotes + reserve + FTSO band, gated by the live enclave key) | `0x5FAEC4B63c1dE7170C02f6722f927e36cdb97f11` |
-| ConfidentialSpaceRegistry (real Google token, production TDX claims + exact eat_nonce verified on chain) | `0xb3fc723aF411b3C4e3b7662E6Ef96382E18b2687` |
-| Live enclave (GCP Confidential Space, **production** Intel TDX) | key `0x51D40Cee9350fDA484fc8a76Db4A51DEB5e3067A`, image `sha256:09bd5545…0da136` |
+| Anchor | `0x44E8F6c8153F4104b3DA5dc2ca1FA4c114678d13` |
+| FXRP (demo) | `0x45a0ED01D31dAd226ba26B448f43BFDfD1d0fb6f` |
+| Vault | `0x6dec4d8bfb94eee9228adf330260ab31e0afd2d9` |
+| YieldSplitter | `0xd08FbB1eb7fA2D304DB7343Af9B67650A87a0db1` |
+| PT | `0xc2b3382DDE30438De339df4081B4823Af6559a90` |
+| YT | `0xF749F4C6451739fb9e69C59203c2FB88a750bdE1` |
+| PtAmm | `0xbeF4f1426d45D92C3Ca39421B4b6CfAEA1Ad4A3e` |
+| ConfidentialYtRfq (signed quotes + reserve + FTSO band, gated by the live enclave key) | `0xde8b54126782141a2Cb5Fcd2331f1e9286764E01` |
+| ConfidentialSpaceRegistry (real Google token, production TDX claims + exact eat_nonce verified on chain) | `0x6198FA295a9871b9D41380355d7799df6CB455F2` |
+| Live enclave (GCP Confidential Space, **production** Intel TDX) | key `0x06854aA1291CbbDeA01Bc067A01bec73760FF1A8`, image `sha256:8c1ae4d4…0da136` |
 | FtsoReader | `0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f` |
 | FTestXRP (real FAsset, minted from native XRP) | `0x0b6A3645c240605887a5532109323A3E12273dc7` |
 | XrpOnRamp (FDC proof releases FXRP + locks, recipient bound to the XRP memo) | `0x435Aed87c5B350F837aD9Fc2d5e2f8855f1e89F9` |
