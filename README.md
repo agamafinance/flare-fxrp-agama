@@ -138,17 +138,17 @@ Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can tr
 | PT | `0x31B1FA947C2b332DA7b348C9421d3C608E3f1E93` |
 | YT | `0xA84437A6CAEeeAB1eB208e6E686a761A0B7cDa1d` |
 | PtAmm | `0x541fe9998696EEb7Fb66C9058CA7Cc263670fa31` |
-| ConfidentialYtRfq (signed quotes + reserve, gated by the live enclave key) | `0x2046d700eC62D21d897746aFd978F74DDF9b7C58` |
-| ConfidentialSpaceRegistry (real Google token, production TDX claims verified on chain) | `0x18210F6885f44e5C173E6fC185fcBe3A77eFA2Cc` |
-| Live enclave (GCP Confidential Space, **production** Intel TDX) | key `0x87a67CCA80382c8E7B241C1791F43Bc1072910a8`, image `sha256:bbe39b21…cb13c0` |
+| ConfidentialYtRfq (signed quotes + reserve + FTSO band, gated by the live enclave key) | `0x5FAEC4B63c1dE7170C02f6722f927e36cdb97f11` |
+| ConfidentialSpaceRegistry (real Google token, production TDX claims + exact eat_nonce verified on chain) | `0xb3fc723aF411b3C4e3b7662E6Ef96382E18b2687` |
+| Live enclave (GCP Confidential Space, **production** Intel TDX) | key `0x51D40Cee9350fDA484fc8a76Db4A51DEB5e3067A`, image `sha256:09bd5545…0da136` |
 | FtsoReader | `0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f` |
 | FTestXRP (real FAsset, minted from native XRP) | `0x0b6A3645c240605887a5532109323A3E12273dc7` |
-| XrpOnRamp (FDC proof releases FXRP + locks) | `0x26C769b06bfcFB5FaEC9c5c5fe26C3147B74ea80` |
+| XrpOnRamp (FDC proof releases FXRP + locks, recipient bound to the XRP memo) | `0x435Aed87c5B350F837aD9Fc2d5e2f8855f1e89F9` |
 
 **On the real asset.** The same stack also runs on the real FAsset FXRP (FTestXRP), not just the demo
 token: Anchor `0x1BEaC6Fa4A0F0F113b31678eE630DF0fE93A2b78`, YT `0x793b671DEbCd2169Ce7Dce8A98d206A9Af2c4592`,
-and the confidential RFQ `0x5114AB1548B4B88bc75bc73ED222Fa451783Bcea` settled a live sealed-quote
-auction in real FXRP. Liquidity there is bounded by the real FXRP held.
+and a confidential RFQ (`0xE51E191Ca7f1b6C4A4B0123A91b24bbfB6564510`, gated by the hardened registry)
+that settled a live sealed-quote auction in real FXRP. Liquidity there is bounded by the real FXRP held.
 
 Explorer: https://coston2-explorer.flare.network/address/0x2046d700eC62D21d897746aFd978F74DDF9b7C58
 
