@@ -100,12 +100,16 @@ manually set key. `ConfidentialSpaceRegistry` registers the enclave key only aft
 chain, a real **GCP Confidential Space attestation JWT**: RS256 (`rsa/RsaVerify.sol` via the modexp
 precompile) against Google's confidentialspace-sign key, then it base64url-decodes the token payload
 and requires the issuer, the approved `image_digest`, and the presented enclave key as the token
-`eat_nonce`. `ConfidentialYtRfq` reads its trusted key from the registry. The enclave workload
-(`enclave/matcher.py`, `enclave/Dockerfile`) is the TDX-ready container; its signature is
-byte-for-byte compatible with the RFQ. In this POC the attester is a test RSA key and the token is
-in the exact CS format (`test/vectors/cs_attestation_jwt.json`), so the full on-chain verification
-is provable without GCP; the one step that needs a GCP account is producing a Google-signed token
-(see `enclave/README.md`).
+`eat_nonce`. `ConfidentialYtRfq` reads its trusted key from the registry.
+
+**This runs live, not as scaffolding.** The enclave workload (`enclave/matcher.py`) runs continuously
+inside a real **GCP Confidential Space VM (Intel TDX)**: it generates its signing key inside the TEE
+(nobody, including us, holds the private key), requests a real Google-signed attestation token binding
+that key to its image digest, and serves `/attestation` and `/settle`. That real Google token is
+verified on chain by `ConfidentialSpaceRegistry` (`test/ConfidentialSpaceGoogle.t.sol` replays it
+against Google's JWKS modulus), registering the enclave key. A full settlement has been run end to
+end on Coston2: sealed quotes to the live enclave, it signs the winner in the TEE, the contract
+verifies that signature and settles (`enclave/settle-via-enclave.sh`).
 
 ## Live on Coston2 (chainId 114)
 
@@ -120,8 +124,9 @@ Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can tr
 | PT | `0x4557491bCd8Da8BD2e32861b5C3CB70EDCB3D1aE` |
 | YT | `0x04A05b47fd57E5230a428111B9c3B45c16493752` |
 | PtAmm | `0x77D28482ace00b7760766a7699e6DcdDeAeed82E` |
-| ConfidentialYtRfq | `0x6020531B571dbFC9Df4d905DA29c0b2bB7A7e48F` |
-| ConfidentialSpaceRegistry | `0x243f098E589118fB0F5e8a6f13f987Da170b5D3a` |
+| ConfidentialYtRfq (gated by the live enclave key) | `0x3A2BC1e41357c5ec7D6E14Cbe0caFcE17279ad4F` |
+| ConfidentialSpaceRegistry (real Google token verified on chain) | `0x803eae4BAc40Bc84290135f4deB70484EBBE7a71` |
+| Live enclave (GCP Confidential Space, Intel TDX) | key `0xDCC54E95E2407D31d10F95ECBdf220e36CE1DFE2`, image `sha256:21fa0db5…0920f7` |
 | FtsoReader | `0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f` |
 | FTestXRP (real FAsset, minted from native XRP) | `0x0b6A3645c240605887a5532109323A3E12273dc7` |
 
@@ -160,11 +165,11 @@ see [`DEPLOY.md`](./DEPLOY.md).
 
 ## Known limitations (honest status)
 
-- **The enclave does not yet run in a live GCP TDX.** The on-chain verification follows the real
-  Confidential Space attestation format and the workload is TDX-ready, but the attester is a test
-  RSA key and the code image digest is a placeholder. Producing a Google-signed token needs a GCP
-  Confidential Space deployment (`enclave/README.md`). Until then this is verified scaffolding, not
-  a deployed confidential app.
+- **The enclave runs in a live GCP Confidential Space TDX** and a settlement was verified on chain
+  end to end. The remaining production gap is quote authentication: the demo `/settle` endpoint is
+  open, so it must be caller-restricted and market makers must submit signed/committed quotes before
+  it faces untrusted callers. The VM is a single instance (no HA/redundancy) and uses the debug CS
+  image so the attestation is also visible in the serial log.
 - **The live Coston2 demo uses a mock yield vault.** There is no real single-asset FXRP yield vault
   on Coston2 (the real ones, e.g. bizFXRP, are on Flare mainnet, which `test/ForkVault.t.sol`
   binds to for deposit). The fixed rate is manufactured by the AMM discount over that mock; the
