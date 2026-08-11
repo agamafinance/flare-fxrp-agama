@@ -26,7 +26,16 @@ contract FdcRealProofTest is Test {
 
     function test_RealXrplPayment_VerifiesAndCredits() public {
         Payment.Response memory r = abi.decode(response, (Payment.Response));
-        XrpOnRamp ramp = new XrpOnRamp(r.responseBody.receivingAddressHash);
+
+        // auto-skip if this voting round's root has aged out of the Relay's retention window,
+        // so the suite stays green over time (regenerate the vector with fdc-onramp/run.py)
+        IRelay relay = IRelay(IFdcRegistry(0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019).getContractAddressByName("Relay"));
+        if (relay.merkleRoots(200, r.votingRound) == bytes32(0)) {
+            vm.skip(true);
+            return;
+        }
+
+        XrpOnRamp ramp = new XrpOnRamp(r.responseBody.receivingAddressHash, bytes32("testXRP"));
 
         assertTrue(ramp.verify(response, proof, r.votingRound), "real FDC attestation verifies vs live Relay root");
 

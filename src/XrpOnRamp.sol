@@ -18,17 +18,22 @@ import "./fdc/IFdc.sol";
  */
 contract XrpOnRamp {
     uint256 public constant FDC_PROTOCOL_ID = 200;
+    bytes32 public constant ATT_PAYMENT = bytes32("Payment"); // FDC "Payment" attestation type
+    uint8 public constant STATUS_SUCCESS = 0; // Payment status 0 = success
+
     IRelay public immutable relay;
     bytes32 public immutable treasuryAddressHash; // FDC hash of Agama's XRPL receiving address
+    bytes32 public immutable expectedSourceId; // e.g. bytes32("testXRP") on Coston2, bytes32("XRP") on mainnet
 
     mapping(bytes32 => bool) public usedTx; // replay protection by XRPL transaction id
     mapping(address => uint256) public credited; // Flare user -> XRP drops proven in
 
     event XrpDeposited(address indexed user, uint256 amountDrops, bytes32 indexed xrplTxId, uint8 status);
 
-    constructor(bytes32 _treasuryAddressHash) {
+    constructor(bytes32 _treasuryAddressHash, bytes32 _expectedSourceId) {
         relay = IRelay(IFdcRegistry(0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019).getContractAddressByName("Relay"));
         treasuryAddressHash = _treasuryAddressHash;
+        expectedSourceId = _expectedSourceId;
     }
 
     /// Verify attested response bytes against the finalized FDC Merkle root on the Relay.
@@ -55,6 +60,10 @@ contract XrpOnRamp {
     {
         Payment.Response memory data = abi.decode(attestedResponse, (Payment.Response));
         require(verify(attestedResponse, merkleProof, data.votingRound), "invalid FDC payment proof");
+        // bind the attestation to the right type, source chain and a successful payment
+        require(data.attestationType == ATT_PAYMENT, "not a Payment attestation");
+        require(data.sourceId == expectedSourceId, "wrong source chain");
+        require(data.responseBody.status == STATUS_SUCCESS, "payment not successful");
         require(data.responseBody.receivingAddressHash == treasuryAddressHash, "wrong receiver");
 
         bytes32 txId = data.requestBody.transactionId;
