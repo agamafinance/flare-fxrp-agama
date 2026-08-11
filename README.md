@@ -1,0 +1,104 @@
+# ⚓ Anchor
+
+**Lock a fixed rate on your XRP. Sell the uncertainty.**
+
+Anchor is a fixed-rate savings primitive for XRPFi on [Flare](https://flare.network). You
+deposit FXRP, buy the **principal token (PT)** at a discount, and redeem it **1:1 at maturity**.
+Your return is fixed the moment you buy, no matter what the underlying vault actually earns. The
+variable yield goes to whoever wants the upside (the **yield token, YT**).
+
+Built for the Flare Summer Signal hackathon. Live on Coston2.
+
+## Why
+
+XRPFi is yield poor and yield variable: today's vaults pay a few percent that nobody can promise
+in advance. Anchor turns that variable stream into a choice. Buy PT to lock certainty, or buy YT
+to take the upside. Same deposit, two honest sides of the same trade.
+
+## How it works
+
+1. **Deposit into a vault.** FXRP earns real XRPFi yield in an ERC-4626 vault (e.g. Mystic Core
+   FXRP or Bizantine SuperVault), issued as vault shares.
+2. **Split into PT + YT.** The position is tokenized: principal and yield become two separate,
+   tradable tokens. PT redeems 1:1 for principal at maturity; YT captures all the yield until then.
+3. **Buy PT at a discount.** On a real YieldSpace AMM you buy PT below par. That discount *is*
+   your fixed rate, locked at purchase.
+4. **Redeem 1:1 at maturity.** Each PT redeems for exactly 1 FXRP of principal. Your return was
+   fixed on day one, whatever the yield did.
+
+The fixed rate is manufactured by the PT discount, not by anyone's balance sheet. As maturity
+nears, the YieldSpace curve flattens to constant-sum and PT converges to par mechanically.
+
+## Architecture
+
+| Contract | Role |
+| --- | --- |
+| `YieldSplitter.sol` | The PT/YT engine over an ERC-4626 vault. Split, claim yield, redeem principal. MasterChef-style yield accounting stays correct when YT changes hands. |
+| `SplitToken.sol` | Minimal ERC20 for PT and YT. The YT instance settles yield on every transfer. |
+| `PtAmm.sol` | A real YieldSpace AMM (`x^(1-t) + y^(1-t) = k`) for PT vs FXRP, decimals-aware (real FXRP is 6 decimals), PRBMath fixed point. Buying PT locks a fixed rate. |
+| `Anchor.sol` | The user-facing router. One call to lock a fixed rate, a quote for the front, and 1:1 redemption at maturity. |
+| `interfaces/IERC4626.sol` | The standard vault surface Anchor codes against, so a real vault is a one-line swap. |
+| `MockERC20.sol`, `MockVault.sol` | Test and demo stand-ins for FXRP and a yield-bearing vault. |
+
+## Proven
+
+`forge test` runs **10 tests, all green**, including:
+
+- The full lifecycle: split, YT captures the yield, PT redeems principal 1:1.
+- Sell YT to lock certainty; the yield accounting splits correctly on transfer.
+- The YieldSpace AMM: PT trades at a discount, implies a 5% fixed APR, converges to par at maturity.
+- End to end: a buyer's realized return equals the rate locked at purchase, **independent of the
+  realized yield**, which flows entirely to YT.
+- The unified router exercised at both 18 and the real **6 decimals** (identical result).
+- A **live Flare mainnet fork test** binding the splitter to the real `bizFXRP` ERC-4626 vault:
+  real FXRP deposit, real price-per-share, position equals principal.
+
+## Live on Coston2 (chainId 114)
+
+Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can try it).
+
+| Contract | Address |
+| --- | --- |
+| Anchor | `0xC0E346206B5d6446f69522D29A88BC45B2B5c719` |
+| FXRP (demo) | `0xA6fC08A750dC00e6f613e2aabaB5a54949D8B356` |
+| Vault | `0xD0c8Ca68cc81fF4486d5D725fCE612ddFeb0672D` |
+| YieldSplitter | `0xBb4c3A08E108465b305205D92C089cd1a63976b6` |
+| PT | `0x4557491bCd8Da8BD2e32861b5C3CB70EDCB3D1aE` |
+| YT | `0x04A05b47fd57E5230a428111B9c3B45c16493752` |
+| PtAmm | `0x77D28482ace00b7760766a7699e6DcdDeAeed82E` |
+
+A second instance with a short (10 minute) maturity is deployed for demoing the full lock to
+redeem cycle live: Anchor `0xd84508307C035F409777e2b5E5eCa90bE34Eb292`.
+
+Explorer: https://coston2-explorer.flare.network/address/0xC0E346206B5d6446f69522D29A88BC45B2B5c719
+
+## Run it
+
+```bash
+forge test              # 10/10, plus a live Flare fork test
+forge test -vv          # with the logged numbers
+```
+
+Front (browser dApp, viem):
+
+```bash
+./run-local.sh          # anvil + deploy + serve, then open http://127.0.0.1:8547/app.html
+```
+
+Or open `frontend/app.html` against Coston2 directly with a wallet. Deploy your own:
+see [`DEPLOY.md`](./DEPLOY.md).
+
+## Notes
+
+- **Real vaults.** The splitter codes against ERC-4626, so it wraps any single-asset yield vault
+  whose price-per-share only grows. `bizFXRP` is permissionless; Mystic `CSXRP` is the higher
+  credibility target but gates deposits. DEX LP tokens are not strippable (no stable principal).
+- **FAssets.** Native XRP becomes FXRP only through the FAssets protocol (an XRPL payment plus an
+  FDC proof), so it is not a synchronous on-chain deposit. Build against FXRP as a plain ERC20;
+  pre-mint test FXRP for a live demo.
+- **Liquidity is the product.** The locked rate is the discount minus slippage. A trade that is
+  large relative to the pool eats its own discount, so depth matters.
+
+## Disclaimer
+
+Proof of concept, unaudited, testnet only. Not financial advice.
