@@ -14,7 +14,7 @@ import "../src/tee/ConfidentialSpaceRegistry.sol";
 contract DeployConfidentialSpace is Script {
     function run() external {
         uint256 pk = vm.envUint("PRIVATE_KEY");
-        string memory j = vm.readFile("test/vectors/cs_attestation_jwt.json");
+        string memory j = vm.readFile(vm.envOr("CS_VECTOR", string("test/vectors/cs_attestation_jwt.json")));
         bytes memory n = vm.parseJsonBytes(j, ".n");
         bytes memory imageDigest = bytes(vm.parseJsonString(j, ".imageDigest"));
         bytes memory header = bytes(vm.parseJsonString(j, ".headerB64"));

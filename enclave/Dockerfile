@@ -7,8 +7,9 @@ WORKDIR /enclave
 RUN pip install --no-cache-dir eth-account eth-abi eth-utils requests
 COPY matcher.py /enclave/matcher.py
 
-# Confidential Space launch policy: no debug, so the attestation states disabled-since-boot.
+# Confidential Space launch policy. Allow the enclave key address to be set at launch (eat_nonce).
 LABEL "tee.launch_policy.allow_cmd_override"="false"
 LABEL "tee.launch_policy.log_redirect"="always"
+LABEL "tee.launch_policy.allow_env_override"="ENCLAVE_ADDRESS"
 
 ENTRYPOINT ["python", "/enclave/matcher.py"]
