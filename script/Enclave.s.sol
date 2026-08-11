@@ -5,6 +5,7 @@ import "forge-std/Script.sol";
 
 interface IReg { function getContractAddressByName(string calldata) external view returns (address); }
 interface IFtso { function getFeedById(bytes21) external view returns (uint256, int8, uint64); }
+interface IRng { function getRandomNumber() external view returns (uint256, bool, uint256); }
 
 /**
  * Enclave: simulates the Confidential Compute enclave that runs the YT RFQ matching.
@@ -31,15 +32,8 @@ contract Enclave is Script {
         address[] memory mms = vm.envAddress("QUOTE_MMS", ",");
         uint256[] memory prices = vm.envUint("QUOTE_PRICES", ",");
 
-        // best execution: highest price wins (the losing quotes stay inside the enclave)
-        uint256 best;
-        address winner;
-        for (uint256 i; i < prices.length; i++) {
-            if (prices[i] > best) {
-                best = prices[i];
-                winner = mms[i];
-            }
-        }
+        // best execution: highest price wins; ties broken fairly by Flare Secure RNG
+        (address winner, uint256 best) = _pickWinner(mms, prices);
 
         // oracle-aware: cross-check the winning quote against the live FTSO oracle (see _oracleAware)
         _oracleAware(best, ytAmount);
@@ -66,6 +60,26 @@ contract Enclave is Script {
                 vm.toString(s)
             )
         );
+    }
+
+    /// Best execution with a fair tie-break: highest price wins; if several market makers tie at
+    /// the best price, Flare's enshrined Secure RNG picks among them verifiably (no operator bias).
+    function _pickWinner(address[] memory mms, uint256[] memory prices)
+        internal view returns (address winner, uint256 best)
+    {
+        for (uint256 i; i < prices.length; i++) if (prices[i] > best) best = prices[i];
+        uint256 ties;
+        for (uint256 i; i < prices.length; i++) if (prices[i] == best) ties++;
+        uint256 pick;
+        if (ties > 1) {
+            (uint256 rnd,,) = IRng(IReg(0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019).getContractAddressByName("RandomNumberV2")).getRandomNumber();
+            pick = rnd % ties;
+            console2.log("tie at best price broken by Flare Secure RNG; ties =", ties);
+        }
+        uint256 seen;
+        for (uint256 i; i < prices.length; i++) {
+            if (prices[i] == best) { if (seen == pick) { winner = mms[i]; break; } seen++; }
+        }
     }
 
     /// The enclave reads the live enshrined FTSO oracle to (1) reject economically absurd quotes
