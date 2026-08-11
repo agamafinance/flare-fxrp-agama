@@ -5,6 +5,7 @@ import "./fdc/IFdc.sol";
 
 interface IAnchorLock {
     function lockFixedRate(uint256 fxrpIn, uint256 minPtOut) external returns (uint256 ptOut);
+    function previewLock(uint256 fxrpIn) external view returns (uint256 ptOut, uint256 aprE18);
     function pt() external view returns (address);
     function fxrp() external view returns (address);
 }
@@ -34,7 +35,7 @@ contract XrpOnRamp {
     uint256 public constant FDC_PROTOCOL_ID = 200;
     bytes32 public constant ATT_PAYMENT = bytes32("Payment"); // FDC "Payment" attestation type
     uint8 public constant STATUS_SUCCESS = 0; // Payment status 0 = success
-    uint256 public constant MIN_RATE_BPS = 9800; // PT out floor: >= 98% of 1:1, a coarse anti-sandwich bound
+    uint256 public constant SLIP_TOL_BPS = 100; // PT out floor = 99% of the AMM fair quote (anti-slippage)
 
     IRelay public immutable relay;
     bytes32 public immutable treasuryAddressHash; // FDC hash of Agama's XRPL receiving address (pinned)
@@ -104,8 +105,10 @@ contract XrpOnRamp {
         uint256 amountDrops = uint256(received); // XRP drops are 6 decimals, same as FXRP
         require(fxrp.balanceOf(address(this)) >= amountDrops, "onramp out of FXRP");
 
-        // the contract, not the relayer, sets the slippage floor, bounding AMM-sandwich MEV
-        uint256 minPtOut = amountDrops * MIN_RATE_BPS / 10000;
+        // the contract sets the slippage floor from the AMM's fair quote (not par), so a relayer
+        // cannot pass minPtOut=0. Residual same-block sandwich MEV needs a TWAP / private orderflow.
+        (uint256 fairPtOut,) = anchor.previewLock(amountDrops);
+        uint256 minPtOut = fairPtOut * (10000 - SLIP_TOL_BPS) / 10000;
         fxrp.approve(address(anchor), amountDrops);
         ptOut = anchor.lockFixedRate(amountDrops, minPtOut); // PT is minted to this contract
         require(pt.transfer(to, ptOut), "pt out"); // forward the locked PT to the payer

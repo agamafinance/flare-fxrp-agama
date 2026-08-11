@@ -24,6 +24,7 @@ contract AnchorTest is Test {
         uint256 maturity = block.timestamp + 90 days;
         YieldSplitter splitter = new YieldSplitter(vault, maturity);
         SplitToken pt = splitter.pt();
+        vm.prank(lp); // lp is the single LP (owner) of the AMM
         PtAmm amm = new PtAmm(IERC20Min(address(fxrp)), IERC20Min(address(pt)), maturity, 1e18);
         Anchor anchor = new Anchor(splitter, amm);
 
@@ -55,7 +56,7 @@ contract AnchorTest is Test {
 
         assertEq(ptOut, previewPt, "preview == execution (fresh pool)");
         assertGt(ptOut, 500 * ONE, "bought PT at a discount");
-        assertApproxEqAbs(aprE18, 0.05e18, 0.003e18, "locked ~5% APR");
+        assertApproxEqAbs(aprE18, 0.045e18, 0.005e18, "locked ~4.5% realized APR (from the actual fill, not spot)");
 
         // --- Redeem 1:1 at maturity ---
         vm.warp(block.timestamp + 91 days);

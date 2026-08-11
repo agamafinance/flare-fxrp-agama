@@ -41,6 +41,7 @@ contract AnchorE2ETest is Test {
         splitter = new YieldSplitter(vault, maturity);
         ptTok = splitter.pt();
         ytTok = splitter.yt();
+        vm.prank(lp); // lp is the single LP (owner) of the AMM
         amm = new PtAmm(IERC20Min(address(fxrp)), IERC20Min(address(ptTok)), maturity, 1e18);
 
         // LP mints certainty for the market: splits FXRP, seeds the pool with a PT discount,

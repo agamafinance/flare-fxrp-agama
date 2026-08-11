@@ -35,6 +35,9 @@ _rl_lock, _rl = threading.Lock(), {}
 def rate_ok(caller):
     now = time.monotonic()
     with _rl_lock:
+        if len(_rl) > 4096:  # bound memory: evict callers with no recent requests
+            for k in [k for k, v in _rl.items() if not v or now - v[-1] > RATE_WINDOW]:
+                del _rl[k]
         q = _rl.setdefault(caller, [])
         while q and now - q[0] > RATE_WINDOW:
             q.pop(0)
@@ -174,10 +177,10 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path != "/settle": return self._s(404, {"error": "not found"})
         if not rate_ok(self.client_address[0]): return self._s(429, {"error": "rate limited"})  # per-caller
-        length = int(self.headers.get("Content-Length", 0))
-        if length > MAX_BODY: return self._s(413, {"error": "request too large"})
-        d = json.loads(self.rfile.read(length))
         try:
+            length = int(self.headers.get("Content-Length", 0))
+            if length > MAX_BODY: return self._s(413, {"error": "request too large"})  # in try: a bad
+            d = json.loads(self.rfile.read(length))                                    # length/body -> 400, not a crash
             quotes = d["quotes"]
             assert len(quotes) <= MAX_QUOTES, "too many quotes"               # bound the work per request
             rfq, chain_id, rfq_id = d["rfq"], int(d["chainId"]), int(d["rfqId"])

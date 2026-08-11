@@ -2,7 +2,7 @@
 pragma solidity ^0.8.25;
 
 import "./interfaces/IERC4626.sol"; // IERC20
-import "./EnclaveRegistry.sol"; // IEnclaveRegistry
+import "./IEnclaveRegistry.sol";
 
 /**
  * @title ConfidentialYtRfq

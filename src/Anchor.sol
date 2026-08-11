@@ -36,7 +36,7 @@ contract Anchor {
     /// Quote for the front-end: PT received and the fixed APR (1e18) locked at the current price.
     function previewLock(uint256 fxrpIn) external view returns (uint256 ptOut, uint256 impliedAprE18) {
         ptOut = amm.previewFxrpForPt(fxrpIn);
-        impliedAprE18 = amm.impliedApr();
+        impliedAprE18 = _realizedApr(fxrpIn, ptOut); // rate from the actual fill, not the pre-trade spot
     }
 
     /// One call: deposit FXRP, buy PT at a discount, lock a fixed rate. PT goes to the user.

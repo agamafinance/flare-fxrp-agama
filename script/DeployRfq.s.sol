@@ -3,7 +3,7 @@ pragma solidity ^0.8.25;
 
 import "forge-std/Script.sol";
 import "../src/ConfidentialYtRfq.sol";
-import "../src/EnclaveRegistry.sol";
+import "../src/IEnclaveRegistry.sol";
 import "../src/interfaces/IERC4626.sol";
 
 /**

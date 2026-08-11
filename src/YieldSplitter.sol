@@ -26,6 +26,8 @@ contract YieldSplitter is ISplitterHook {
     // MasterChef-style yield accounting
     uint256 public accYieldPerYT; // scaled 1e18
     uint256 public lastYieldTotal; // total yield ever generated (monotonic)
+    uint256 public yieldFinal; // yield total frozen at maturity (YT stops accruing after)
+    bool public yieldFinalized;
     mapping(address => uint256) public yieldDebt;
     mapping(address => uint256) public pendingClaim;
 
@@ -52,6 +54,10 @@ contract YieldSplitter is ISplitterHook {
 
     function _updateGlobal() internal {
         uint256 cur = _currentYieldTotal();
+        if (block.timestamp >= maturity) {
+            if (!yieldFinalized) { yieldFinalized = true; yieldFinal = cur; } // YT stops accruing at maturity
+            cur = yieldFinal;
+        }
         if (cur <= lastYieldTotal) return; // never ratchet down: a share-price dip must not re-count on recovery
         uint256 supply = yt.totalSupply();
         if (supply == 0) return; // no YT holders yet: defer this band instead of advancing past it (not stranded)
@@ -99,8 +105,13 @@ contract YieldSplitter is ISplitterHook {
     /// YT holder claims accrued yield in FXRP.
     function claimYield() external returns (uint256 got) {
         _accrue(msg.sender);
+        // principal is senior: never pay out yield that would leave the vault below outstanding
+        // principal (a reversed share-price mark must not let YT drain PT's backing).
+        uint256 held = vault.convertToAssets(vault.balanceOf(address(this)));
+        uint256 surplus = held > totalPrincipal ? held - totalPrincipal : 0;
         uint256 amt = pendingClaim[msg.sender];
-        pendingClaim[msg.sender] = 0;
+        if (amt > surplus) amt = surplus;
+        pendingClaim[msg.sender] -= amt;
         if (amt > 0) {
             uint256 shares = vault.convertToShares(amt);
             got = vault.redeem(shares, msg.sender, address(this));
@@ -138,6 +149,7 @@ contract YieldSplitter is ISplitterHook {
         uint256 held = vault.convertToAssets(vault.balanceOf(address(this)));
         uint256 gross = held + totalYieldClaimed;
         uint256 cur = gross <= totalPrincipal ? totalYieldClaimed : gross - totalPrincipal;
+        if (yieldFinalized) cur = yieldFinal; // yield frozen at maturity
         uint256 acc = accYieldPerYT;
         uint256 supply = yt.totalSupply();
         if (supply > 0 && cur > lastYieldTotal) acc += ((cur - lastYieldTotal) * 1e18) / supply;

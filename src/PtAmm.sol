@@ -28,6 +28,7 @@ interface IERC20Min {
 contract PtAmm {
     IERC20Min public immutable fxrp;
     IERC20Min public immutable pt;
+    address public immutable owner; // single LP: only the owner adds/removes liquidity
     uint256 public immutable maturity;
     UD60x18 public immutable ts; // value of t at 1 year to maturity
 
@@ -43,12 +44,19 @@ contract PtAmm {
     event Liquidity(uint256 fxrp, uint256 pt);
 
     constructor(IERC20Min _fxrp, IERC20Min _pt, uint256 _maturity, uint256 _timeStretchE18) {
+        require(_fxrp.decimals() <= 18 && _pt.decimals() <= 18, "decimals > 18");
         fxrp = _fxrp;
         pt = _pt;
+        owner = msg.sender;
         maturity = _maturity;
         ts = ud(_timeStretchE18);
         SCALE_X = 10 ** (18 - _fxrp.decimals());
         SCALE_Y = 10 ** (18 - _pt.decimals());
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "only owner");
+        _;
     }
 
     /* ------------------------------ curve helpers ---------------------------- */
@@ -85,10 +93,19 @@ contract PtAmm {
         require(got == amt, "fee-on-transfer unsupported");
     }
 
-    function addLiquidity(uint256 dxFxrp, uint256 dyPt) external {
+    function addLiquidity(uint256 dxFxrp, uint256 dyPt) external onlyOwner {
         fxrpReserve += _pull(fxrp, msg.sender, dxFxrp);
         ptReserve += _pull(pt, msg.sender, dyPt);
         emit Liquidity(dxFxrp, dyPt);
+    }
+
+    /// The single LP (owner) can withdraw liquidity, so seeded funds are not permanently locked.
+    function removeLiquidity(uint256 dxFxrp, uint256 dyPt) external onlyOwner {
+        fxrpReserve -= dxFxrp;
+        ptReserve -= dyPt;
+        require(fxrp.transfer(msg.sender, dxFxrp), "fxrp out");
+        require(pt.transfer(msg.sender, dyPt), "pt out");
+        emit Liquidity(fxrpReserve, ptReserve);
     }
 
     /* --------------------------------- swaps --------------------------------- */

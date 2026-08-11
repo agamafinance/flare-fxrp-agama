@@ -20,6 +20,8 @@ library RsaVerify {
     {
         uint256 k = modulus.length;
         if (sig.length != k) return false;
+        if (!_lt(sig, modulus)) return false; // reject non-canonical sigs (s >= n); s and s+n verify alike,
+            // which would otherwise defeat a keccak(sig)-keyed one-time guard
 
         // modexp: decrypted = sig ^ exponent mod modulus
         bytes memory input = abi.encodePacked(uint256(sig.length), uint256(exponent.length), uint256(k), sig, exponent, modulus);
@@ -45,5 +47,14 @@ library RsaVerify {
             em[p + i] = h[i];
         }
         return keccak256(em) == keccak256(decrypted);
+    }
+
+    /// big-endian a < b for equal-length byte arrays
+    function _lt(bytes memory a, bytes memory b) private pure returns (bool) {
+        for (uint256 i = 0; i < a.length; i++) {
+            if (a[i] < b[i]) return true;
+            if (a[i] > b[i]) return false;
+        }
+        return false; // equal
     }
 }

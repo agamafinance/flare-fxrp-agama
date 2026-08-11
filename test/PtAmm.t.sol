@@ -26,7 +26,8 @@ contract PtAmmTest is Test {
         splitter = new YieldSplitter(vault, maturity);
         ptTok = splitter.pt();
 
-        // time stretch = 1.0  -> at 90d, t = 90/365 ≈ 0.247 (exponent a ≈ 0.753)
+        // time stretch = 1.0  -> at 90d, t = 90/365 ≈ 0.247 (exponent a ≈ 0.753). lp is the single LP (owner).
+        vm.prank(lp);
         amm = new PtAmm(IERC20Min(address(fxrp)), IERC20Min(address(ptTok)), maturity, 1e18);
 
         // LP gets PT by splitting, then seeds a DEEP pool with more PT than FXRP (creates the discount).
@@ -88,5 +89,22 @@ contract PtAmmTest is Test {
 
         assertLt(priceStart, priceNear, "PT price rises toward par as maturity nears");
         assertApproxEqAbs(priceAt, 1e18, 1e12, "PT == par (1:1) at maturity");
+    }
+
+    /// The single LP (owner) can withdraw seeded liquidity, so funds are not permanently locked; a
+    /// non-owner cannot add or remove.
+    function test_4_OwnerCanRemoveLiquidity() public {
+        uint256 fxrpBefore = fxrp.balanceOf(lp);
+        vm.prank(lp);
+        amm.removeLiquidity(5000e18, 5250e18); // pull half of the seeded pool
+        assertEq(fxrp.balanceOf(lp) - fxrpBefore, 5000e18, "lp got FXRP back");
+        assertEq(amm.fxrpReserve(), 5000e18, "reserve decreased");
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("only owner"));
+        amm.removeLiquidity(1, 1);
+        vm.prank(alice);
+        vm.expectRevert(bytes("only owner"));
+        amm.addLiquidity(1, 1);
     }
 }

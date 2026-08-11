@@ -2,7 +2,7 @@
 pragma solidity ^0.8.25;
 
 import "../rsa/RsaVerify.sol";
-import "../EnclaveRegistry.sol"; // IEnclaveRegistry
+import "../IEnclaveRegistry.sol";
 import "./JsonLite.sol";
 
 /// base64url decoder (RFC 4648, no padding), for JWT payloads.
