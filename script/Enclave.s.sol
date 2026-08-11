@@ -45,8 +45,20 @@ contract Enclave is Script {
         console2.log("== enclave signed the winning settlement ==");
         console2.log("winner (best MM)", winner);
         console2.log("price          ", best);
-        console2.log("v              ", v);
-        console2.logBytes32(r);
-        console2.logBytes32(s);
+        // single parseable line for a relayer/front to consume
+        console2.log(
+            string.concat(
+                "RESULT winner=",
+                vm.toString(winner),
+                " price=",
+                vm.toString(best),
+                " v=",
+                vm.toString(uint256(v)),
+                " r=",
+                vm.toString(r),
+                " s=",
+                vm.toString(s)
+            )
+        );
     }
 }
