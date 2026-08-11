@@ -111,6 +111,11 @@
       <input id="ytAmt" type="number" min="0" step="10" value="100" placeholder="0">
       <div class="unit">YT</div>
     </div>
+    <label style="margin-top:12px">Reserve price (won't sell below this)</label>
+    <div class="inrow">
+      <input id="reserve" type="number" min="0" step="0.5" value="2" placeholder="0">
+      <div class="unit">FXRP</div>
+    </div>
     <button id="openRfq" class="btn-primary">Open confidential RFQ</button>
     <button id="cancelRfq" class="btn-ghost hide">Cancel RFQ (reclaim YT)</button>
     <div id="rfqStatus" class="status"></div>
@@ -139,10 +144,10 @@ const CONFIG = {
     fxrp:'0xA6fC08A750dC00e6f613e2aabaB5a54949D8B356',
     pt:'0x4557491bCd8Da8BD2e32861b5C3CB70EDCB3D1aE',
     yt:'0x04A05b47fd57E5230a428111B9c3B45c16493752',
-    rfq:'0x3A2BC1e41357c5ec7D6E14Cbe0caFcE17279ad4F',
+    rfq:'0xC48AABE4EF57FF8ea022F87D50CD65cEaFAD1580',
     splitter:'0xBb4c3A08E108465b305205D92C089cd1a63976b6',
     ftso:'0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f',
-    enclaveUrl:'http://104.155.152.64:8080', // live matcher in GCP Confidential Space (TDX)
+    enclaveUrl:'http://34.10.20.214:8080', // live matcher in GCP Confidential Space (TDX)
   },
   coston2demo: { // short maturity (~10 min) so the full lock -> redeem cycle is demoable live
     chainId: 114, name:'Coston2', rpc:'https://coston2-api.flare.network/ext/C/rpc',
@@ -173,7 +178,7 @@ const FTSO_ABI = [
   {type:'function',name:'xrpUsd1e18',stateMutability:'view',inputs:[],outputs:[{type:'uint256'}]},
 ];
 const RFQ_ABI = [
-  {type:'function',name:'openRfq',stateMutability:'nonpayable',inputs:[{type:'uint256'}],outputs:[{type:'uint256'}]},
+  {type:'function',name:'openRfq',stateMutability:'nonpayable',inputs:[{type:'uint256'},{type:'uint256'}],outputs:[{type:'uint256'}]},
   {type:'function',name:'cancel',stateMutability:'nonpayable',inputs:[{type:'uint256'}],outputs:[]},
   {type:'function',name:'nextId',stateMutability:'view',inputs:[],outputs:[{type:'uint256'}]},
   {type:'function',name:'rfqs',stateMutability:'view',inputs:[{type:'uint256'}],outputs:[{type:'address'},{type:'uint256'},{type:'bool'}]},
@@ -321,11 +326,13 @@ $('split').onclick = async () => {
 
 $('openRfq').onclick = async () => {
   const amt = parseUnits($('ytAmt').value||'0', DEC);
+  const reserve = parseUnits($('reserve').value||'0', DEC);
   if(!(amt>0n)){ setRfqStatus('Enter a YT amount','err'); return; }
+  if(!(reserve>0n)){ setRfqStatus('Set a reserve price above 0','err'); return; }
   try{
     setRfqStatus('Escrowing YT and opening the confidential RFQ…');
     await ensureAllowance(cfg.yt, cfg.rfq, amt);
-    const hash = await wallet.writeContract({account, address:cfg.rfq, abi:RFQ_ABI, functionName:'openRfq', args:[amt]});
+    const hash = await wallet.writeContract({account, address:cfg.rfq, abi:RFQ_ABI, functionName:'openRfq', args:[amt, reserve]});
     await pub.waitForTransactionReceipt({ hash });
     const nid = await pub.readContract({address:cfg.rfq, abi:RFQ_ABI, functionName:'nextId'});
     myRfqId = nid - 1n;

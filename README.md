@@ -132,9 +132,9 @@ Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can tr
 | PT | `0x4557491bCd8Da8BD2e32861b5C3CB70EDCB3D1aE` |
 | YT | `0x04A05b47fd57E5230a428111B9c3B45c16493752` |
 | PtAmm | `0x77D28482ace00b7760766a7699e6DcdDeAeed82E` |
-| ConfidentialYtRfq (gated by the live enclave key) | `0x3A2BC1e41357c5ec7D6E14Cbe0caFcE17279ad4F` |
-| ConfidentialSpaceRegistry (real Google token verified on chain) | `0x803eae4BAc40Bc84290135f4deB70484EBBE7a71` |
-| Live enclave (GCP Confidential Space, Intel TDX) | key `0xDCC54E95E2407D31d10F95ECBdf220e36CE1DFE2`, image `sha256:21fa0db5…0920f7` |
+| ConfidentialYtRfq (signed quotes + reserve, gated by the live enclave key) | `0xC48AABE4EF57FF8ea022F87D50CD65cEaFAD1580` |
+| ConfidentialSpaceRegistry (real Google token verified on chain) | `0xB2fa30a2F5eacc37B88Ac6673ca1a64EBAee8822` |
+| Live enclave (GCP Confidential Space, Intel TDX) | key `0xe33aca29e4DED4DFb6E95702a545E19609F500B9`, image `sha256:9c1fbf09…28905b` |
 | FtsoReader | `0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f` |
 | FTestXRP (real FAsset, minted from native XRP) | `0x0b6A3645c240605887a5532109323A3E12273dc7` |
 
