@@ -100,6 +100,14 @@ rD = post_settle(rfq_id, flood)
 print("D. quote flooding (33)     ->", rD.status_code, rD.json())
 assert rD.status_code == 400 and "too many" in rD.json().get("error", "")
 
+# E. above the FTSO USD risk cap ($10) yet below the notional and above the reserve: only the oracle
+# rejects it, which proves the FTSO price actually changes the accept/reject decision (not decorative).
+if YT_AMT > 30 * ONE:
+    over = signed_quote(mm1, mm1.address, 30 * ONE, deadline, rfq_id)
+    rEb = post_settle(rfq_id, [over])
+    print("E. above FTSO USD cap      ->", rEb.status_code, rEb.json())
+    assert rEb.status_code == 400, "quote over the FTSO USD cap should be rejected"
+
 print("\nSTEP 3 - enclave runs best-execution in the TEE and signs ONLY the winner")
 # two authentic quotes at/above reserve: mm1=4, mm2=6 -> enclave picks mm2, signs
 q1 = signed_quote(mm1, mm1.address, 4 * ONE, deadline, rfq_id)

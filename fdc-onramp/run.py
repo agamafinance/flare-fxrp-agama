@@ -42,9 +42,11 @@ def main():
     payer = Wallet.from_seed(acct["seed"]); treasury = Wallet.create()
     print("payer", payer.address, "-> treasury", treasury.address)
     client = JsonRpcClient(XRPL)
-    # 2. XRPL payment (memo carries the Flare recipient)
+    # 2. XRPL payment. The memo is a 32-byte standardPaymentReference = the Flare recipient address
+    # left-padded, so the on-ramp can bind the released PT to the payer (not a front-running relayer).
+    recipient = os.environ.get("RECIPIENT", "f6d3C9Ed2115A5197F96f6189F6D63B51022Fe16").lower().replace("0x", "")
     tx = Payment(account=payer.address, destination=treasury.address, amount="11000000",
-                 memos=[Memo(memo_data="f6d3C9Ed2115A5197F96f6189F6D63B51022Fe16")])
+                 memos=[Memo(memo_data="0" * 24 + recipient)])  # 64 hex = 32 raw bytes
     h = submit_and_wait(tx, client, payer).result["hash"]
     print("XRPL tx", h)
     # 3. prepareRequest (retry: the verifier's XRPL indexer lags a few seconds behind the ledger)

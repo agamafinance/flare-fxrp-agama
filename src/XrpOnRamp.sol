@@ -114,6 +114,10 @@ contract XrpOnRamp {
         returns (uint256 ptOut)
     {
         require(address(anchor) != address(0), "no anchor");
+        Payment.Response memory data = abi.decode(attestedResponse, (Payment.Response));
+        // the payer names their Flare recipient in the XRP memo (standardPaymentReference); bind the
+        // PT to it so a relayer front-running a public proof cannot redirect it to themselves
+        require(data.responseBody.standardPaymentReference == bytes32(uint256(uint160(to))), "recipient not the payer");
         (uint256 amountDrops, bytes32 txId) = _proveXrpPayment(attestedResponse, merkleProof);
         require(fxrp.balanceOf(address(this)) >= amountDrops, "onramp out of FXRP");
 

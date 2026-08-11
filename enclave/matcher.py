@@ -87,10 +87,24 @@ def mm_can_pay(fxrp, rfq, mm, price):
     allw = int(_call(fxrp, "0x" + SEL_ALLOW + abi_encode(["address", "address"], [mm, rfq]).hex()), 16)
     return bal >= price and allw >= price
 
+MIN_XRP_USD_1E18 = 5 * 10**16     # $0.05: XRP/USD sanity floor
+MAX_XRP_USD_1E18 = 50 * 10**18    # $50:   XRP/USD sanity ceiling
+MAX_FEED_AGE = 600                # 10 min: reject a stale oracle
+
+def latest_block_ts():
+    r = requests.post(RPC, json={"jsonrpc": "2.0", "id": 1, "method": "eth_getBlockByNumber",
+                                 "params": ["latest", False]}, timeout=15).json()
+    return int(r["result"]["timestamp"], 16)
+
 def xrp_usd_1e18():
     out = bytes.fromhex(_call(_resolve("FtsoV2"),
         "0x93e9f806" + abi_encode(["bytes21"], [bytes.fromhex(XRP_USD_FEED[2:])]).hex())[2:])
-    return int.from_bytes(out[:32], "big") * 10**18 // (10 ** int.from_bytes(out[32:64], "big"))
+    value = int.from_bytes(out[:32], "big")
+    px = value * 10**18 // (10 ** int.from_bytes(out[32:64], "big"))
+    ts = int.from_bytes(out[64:96], "big")
+    assert value > 0 and MIN_XRP_USD_1E18 <= px <= MAX_XRP_USD_1E18, "xrp/usd feed out of range"
+    assert latest_block_ts() - ts <= MAX_FEED_AGE, "stale xrp/usd feed"  # freshness guard
+    return px
 
 def secure_random():
     return int.from_bytes(bytes.fromhex(_call(_resolve("RandomNumberV2"), "0xdbdff2c1")[2:])[:32], "big")
@@ -108,8 +122,10 @@ def quote_is_authentic(chain_id, rfq, rfq_id, yt_amount, q):
         return False
     return rec.lower() == q["mm"].lower()
 
-MIN_PREMIUM_USD_1E6 = 100_000            # $0.10 floor: reject economic dust
-MAX_PREMIUM_USD_1E6 = 100_000_000_000    # $100k ceiling: reject absurd premiums
+# A per-settlement USD risk band. MAX is the binding, oracle-derived ceiling: with XRP ~$0.5 a $10 cap
+# is ~20 FXRP, tighter than a typical notional, so the FTSO price actually changes accept/reject.
+MIN_PREMIUM_USD_1E6 = 500_000       # $0.50 floor: reject economic dust
+MAX_PREMIUM_USD_1E6 = 10_000_000    # $10 cap
 
 def premium_usd_1e6(price, xrp_usd):
     # price is FXRP (6dp, ~1:1 with XRP); xrp_usd is USD/XRP scaled 1e18 -> USD value in 6dp

@@ -53,7 +53,7 @@ contract ConfidentialSpaceRegistryTest is Test {
 
     function test_RejectsForgedEnclaveKey() public {
         // valid token, but a different claimed key that is not the token's eat_nonce
-        vm.expectRevert(bytes("enclave key not attested"));
+        vm.expectRevert(bytes("enclave key not the eat_nonce"));
         reg.registerEnclave(header, payload, sig, address(0xBEEF));
     }
 

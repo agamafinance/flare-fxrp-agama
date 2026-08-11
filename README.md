@@ -197,6 +197,12 @@ see [`DEPLOY.md`](./DEPLOY.md).
   production version routes that to the winner. POC simplification.
 - **Two-sided liquidity is unproven with real participants.** The confidential RFQ solves the YT
   demand problem in design; it needs real market makers and PT/YT LPs to be proven economically.
+- **On-ramp FXRP inventory is the demo (mintable) token**, so anyone can top it up; a production
+  on-ramp holds a real FXRP treasury and the `depositAndLock` recipient is bound to the payer's XRP
+  memo (`standardPaymentReference`) so a relayer cannot redirect it. The FTSO USD premium band is a
+  governance parameter (here $0.50-$10 per settlement); it is what makes the oracle price decisional.
+- **The real-FXRP instance has a small pool** (bounded by the FXRP held), so its lock rate is only
+  meaningful for tiny trades; the confidential RFQ on it (which does not touch the pool) is the point.
 
 ## Disclaimer
 

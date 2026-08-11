@@ -96,9 +96,8 @@ contract ConfidentialSpaceRegistry is IEnclaveRegistry {
         require(_contains(payload, HWMODEL), "not Intel TDX");
         require(_contains(payload, SWNAME), "not Confidential Space");
         require(_contains(payload, NODEBUG), "debug enclave not allowed");
-        // the enclave key must be present as the token's eat_nonce (robust to string or array form)
-        require(_contains(payload, bytes('"eat_nonce"')), "no eat_nonce");
-        require(_contains(payload, _toHex(claimedKey)), "enclave key not attested");
+        // the enclave key must be exactly the token's eat_nonce value (not merely present somewhere)
+        require(_contains(payload, bytes.concat('"eat_nonce":"', _toHex(claimedKey), '"')), "enclave key not the eat_nonce");
 
         enclaveSigner = claimedKey;
         emit EnclaveRegistered(claimedKey, expectedImageDigest);
