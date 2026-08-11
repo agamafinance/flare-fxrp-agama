@@ -1,0 +1,435 @@
+<title>Anchor · Lock a fixed rate on your XRP</title>
+<style>
+  :root{
+    --bg:#EEF2EE; --panel:#FFFFFF; --panel-2:#F6F9F5;
+    --ink:#13201A; --soft:#51635A; --faint:#7C8C83;
+    --line:#DBE4DD; --line-2:#E9EFEA;
+    --brand:#254839; --brand-soft:#3B6B54;
+    --accent:#8C5E12; --accent-fill:#E6B450; --accent-weak:#F3E6C4;
+    --pt:#254839; --yt:#1F6E7C;
+    --up:#2E7D5B; --down:#B15330;
+    --shadow:0 1px 2px rgba(20,40,30,.05), 0 10px 34px rgba(20,40,30,.07);
+    --radius:16px;
+    --serif:Georgia,"Iowan Old Style","Times New Roman",serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0B1310; --panel:#111E18; --panel-2:#0D1712;
+      --ink:#E9F1EA; --soft:#9DB0A6; --faint:#6E8077;
+      --line:#22332B; --line-2:#182720;
+      --brand:#59A882; --brand-soft:#4E9A78;
+      --accent:#E6B450; --accent-fill:#E6B450; --accent-weak:#2A2415;
+      --pt:#5FB08A; --yt:#5AB7C6;
+      --up:#5FBE8E; --down:#E0895E;
+      --shadow:0 1px 2px rgba(0,0,0,.30), 0 14px 44px rgba(0,0,0,.38);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#EEF2EE; --panel:#FFFFFF; --panel-2:#F6F9F5;
+    --ink:#13201A; --soft:#51635A; --faint:#7C8C83;
+    --line:#DBE4DD; --line-2:#E9EFEA;
+    --brand:#254839; --brand-soft:#3B6B54;
+    --accent:#8C5E12; --accent-fill:#E6B450; --accent-weak:#F3E6C4;
+    --pt:#254839; --yt:#1F6E7C; --up:#2E7D5B; --down:#B15330;
+    --shadow:0 1px 2px rgba(20,40,30,.05), 0 10px 34px rgba(20,40,30,.07);
+  }
+  :root[data-theme="dark"]{
+    --bg:#0B1310; --panel:#111E18; --panel-2:#0D1712;
+    --ink:#E9F1EA; --soft:#9DB0A6; --faint:#6E8077;
+    --line:#22332B; --line-2:#182720;
+    --brand:#59A882; --brand-soft:#4E9A78;
+    --accent:#E6B450; --accent-fill:#E6B450; --accent-weak:#2A2415;
+    --pt:#5FB08A; --yt:#5AB7C6; --up:#5FBE8E; --down:#E0895E;
+    --shadow:0 1px 2px rgba(0,0,0,.30), 0 14px 44px rgba(0,0,0,.38);
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0}
+  .wrap{
+    font-family:var(--sans); color:var(--ink); background:
+      radial-gradient(1200px 500px at 50% -200px, color-mix(in srgb, var(--brand) 10%, transparent), transparent 70%),
+      var(--bg);
+    min-height:100vh; -webkit-font-smoothing:antialiased; line-height:1.5;
+  }
+  .shell{max-width:1060px; margin:0 auto; padding:28px 22px 72px}
+  @media(max-width:640px){ .shell{padding:20px 15px 56px} }
+
+  /* header */
+  header.top{display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:38px}
+  .brand{display:flex; align-items:center; gap:11px; font-weight:600; letter-spacing:-.01em}
+  .brand .mark{width:30px; height:30px; border-radius:8px; display:grid; place-items:center;
+    background:var(--brand); color:#EAF1EC; font-size:17px; box-shadow:var(--shadow)}
+  :root[data-theme="dark"] .brand .mark, @media(prefers-color-scheme:dark){}
+  .brand b{font-size:16px}
+  .brand span{color:var(--faint); font-size:12.5px; font-weight:500}
+  .netpill{font-size:11.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--soft);
+    border:1px solid var(--line); padding:6px 11px; border-radius:999px; background:var(--panel)}
+
+  /* hero */
+  .eyebrow{font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:var(--brand-soft); font-weight:600}
+  h1{font-family:var(--serif); font-weight:600; letter-spacing:-.015em; text-wrap:balance;
+    font-size:clamp(30px,5.4vw,52px); line-height:1.06; margin:14px 0 0; max-width:16ch}
+  h1 em{font-style:italic; color:var(--brand-soft)}
+  .lede{margin:18px 0 0; font-size:clamp(15px,1.7vw,18px); color:var(--soft); max-width:56ch}
+  .chips{display:flex; flex-wrap:wrap; gap:8px; margin-top:22px}
+  .chip{font-size:12.5px; color:var(--soft); background:var(--panel); border:1px solid var(--line);
+    padding:7px 12px; border-radius:999px; display:inline-flex; gap:7px; align-items:center}
+  .chip .dot{width:6px; height:6px; border-radius:50%; background:var(--brand-soft)}
+
+  /* section scaffolding */
+  section{margin-top:44px}
+  .sec-label{font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); font-weight:600; margin-bottom:14px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow)}
+
+  /* calculator */
+  .calc{display:grid; grid-template-columns:1.05fr 1fr; gap:0; overflow:hidden}
+  @media(max-width:780px){ .calc{grid-template-columns:1fr} }
+  .calc .inputs{padding:26px 26px 28px; border-right:1px solid var(--line)}
+  @media(max-width:780px){ .calc .inputs{border-right:none; border-bottom:1px solid var(--line)} }
+  .calc .out{padding:26px; background:var(--panel-2); display:flex; flex-direction:column}
+
+  .field{margin-bottom:22px}
+  .field:last-child{margin-bottom:0}
+  .field .flabel{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px}
+  .field .flabel span{font-size:13px; color:var(--soft); font-weight:500}
+  .field .flabel b{font-family:var(--sans); font-variant-numeric:tabular-nums; font-size:15px; font-weight:600}
+  .field .flabel b small{font-weight:500; color:var(--faint); font-size:12px; margin-left:2px}
+
+  input[type=range]{-webkit-appearance:none; appearance:none; width:100%; height:5px; border-radius:5px;
+    background:var(--line); outline:none; margin:6px 0}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; appearance:none; width:20px; height:20px;
+    border-radius:50%; background:var(--brand); border:3px solid var(--panel); box-shadow:0 1px 4px rgba(0,0,0,.25); cursor:pointer}
+  input[type=range]::-moz-range-thumb{width:20px; height:20px; border-radius:50%; background:var(--brand);
+    border:3px solid var(--panel); box-shadow:0 1px 4px rgba(0,0,0,.25); cursor:pointer}
+  input[type=range].amber::-webkit-slider-thumb{background:var(--accent-fill)}
+  input[type=range].amber::-moz-range-thumb{background:var(--accent-fill)}
+  .scale{display:flex; justify-content:space-between; font-size:11px; color:var(--faint); margin-top:2px}
+
+  .seg{display:inline-flex; background:var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:3px; gap:2px}
+  .seg button{font-family:var(--sans); font-size:13px; font-weight:600; color:var(--soft); background:none; border:none;
+    padding:7px 15px; border-radius:8px; cursor:pointer; transition:all .15s}
+  .seg button[aria-pressed=true]{background:var(--brand); color:#EAF1EC; box-shadow:0 1px 3px rgba(0,0,0,.2)}
+  :root[data-theme="dark"] .seg button[aria-pressed=true]{color:#0B1310}
+  @media(prefers-color-scheme:dark){ .seg button[aria-pressed=true]{color:#0B1310} }
+
+  /* output block */
+  .out .otop{font-size:12.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--faint); font-weight:600}
+  .bigrate{font-family:var(--serif); font-weight:600; letter-spacing:-.02em; line-height:1;
+    font-size:clamp(52px,9vw,74px); color:var(--accent); font-variant-numeric:tabular-nums; margin:6px 0 2px}
+  .bigrate .pct{font-size:.42em; color:var(--soft); margin-left:4px; font-family:var(--sans); font-weight:600}
+  .ratesub{font-size:13.5px; color:var(--soft)}
+  .divider{height:1px; background:var(--line); margin:22px 0}
+  .rows{display:flex; flex-direction:column; gap:13px}
+  .row{display:flex; justify-content:space-between; align-items:baseline; gap:12px}
+  .row .k{font-size:13.5px; color:var(--soft)}
+  .row .v{font-variant-numeric:tabular-nums; font-weight:600; font-size:15px; text-align:right}
+  .row .v small{color:var(--faint); font-weight:500; font-size:12px}
+  .slip{margin-top:18px; font-size:12.5px; line-height:1.5; color:var(--soft);
+    background:var(--panel); border:1px dashed var(--line); border-radius:10px; padding:11px 13px}
+  .slip b{color:var(--ink)}
+  .slip.warn{border-color:color-mix(in srgb,var(--down) 45%, var(--line)); background:color-mix(in srgb,var(--down) 7%, var(--panel))}
+
+  /* payoff comparison */
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:18px}
+  @media(max-width:780px){ .grid2{grid-template-columns:1fr} }
+  .pad{padding:24px}
+  .cardtitle{font-family:var(--serif); font-size:19px; font-weight:600; letter-spacing:-.01em; margin:0 0 4px}
+  .cardnote{font-size:13px; color:var(--soft); margin:0 0 18px}
+  .scn{margin-bottom:16px}
+  .scn:last-child{margin-bottom:0}
+  .scn .sh{display:flex; justify-content:space-between; font-size:12.5px; color:var(--soft); margin-bottom:7px}
+  .scn .sh b{color:var(--ink); font-weight:600}
+  .bar{position:relative; height:34px; border-radius:8px; background:var(--panel-2); border:1px solid var(--line-2); overflow:hidden}
+  .bar .fill{position:absolute; top:0; bottom:0; left:0; border-radius:7px 0 0 7px; display:flex; align-items:center; padding-left:10px;
+    font-size:12.5px; font-weight:600; color:#fff; font-variant-numeric:tabular-nums; transition:width .4s cubic-bezier(.2,.7,.2,1); white-space:nowrap}
+  .bar .fill.anchor{background:var(--brand)}
+  .bar .fill.varb{background:var(--yt)}
+  :root[data-theme="dark"] .bar .fill{color:#0B1310}
+  @media(prefers-color-scheme:dark){ .bar .fill{color:#0B1310} }
+  .legend{display:flex; gap:18px; margin-top:4px; font-size:12.5px; color:var(--soft)}
+  .legend i{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:middle}
+
+  /* convergence chart */
+  canvas{width:100%; height:220px; display:block}
+  .chartcap{font-size:12.5px; color:var(--soft); margin-top:12px; line-height:1.5}
+
+  /* how it works */
+  .steps{display:grid; grid-template-columns:repeat(4,1fr); gap:14px}
+  @media(max-width:780px){ .steps{grid-template-columns:1fr 1fr} }
+  @media(max-width:460px){ .steps{grid-template-columns:1fr} }
+  .step{padding:20px 18px}
+  .step .n{font-family:var(--serif); font-size:15px; color:var(--accent); font-weight:600}
+  .step h4{margin:8px 0 6px; font-size:15px; letter-spacing:-.01em}
+  .step p{margin:0; font-size:13px; color:var(--soft); line-height:1.5}
+  .tag{display:inline-block; margin-top:10px; font-size:11px; letter-spacing:.04em; text-transform:uppercase; font-weight:600;
+    padding:3px 8px; border-radius:6px}
+  .tag.pt{color:var(--pt); background:color-mix(in srgb,var(--pt) 12%, transparent)}
+  .tag.yt{color:var(--yt); background:color-mix(in srgb,var(--yt) 14%, transparent)}
+
+  /* footer */
+  footer{margin-top:52px; padding-top:22px; border-top:1px solid var(--line); display:flex; flex-wrap:wrap;
+    gap:12px 22px; align-items:center; justify-content:space-between; font-size:12.5px; color:var(--faint)}
+  footer .ok{color:var(--up); font-weight:600}
+  .mono{font-variant-numeric:tabular-nums}
+  a{color:var(--brand-soft); text-decoration:none}
+
+  @media (prefers-reduced-motion:reduce){ *{transition:none!important} }
+</style>
+
+<div class="wrap">
+<div class="shell">
+
+  <header class="top">
+    <div class="brand">
+      <div class="mark">⚓</div>
+      <div><b>Anchor</b> &nbsp;<span>by Agama</span></div>
+    </div>
+    <div class="netpill">XRPFi · Flare</div>
+  </header>
+
+  <!-- HERO -->
+  <div class="eyebrow">Fixed-rate savings for XRP</div>
+  <h1>Lock a fixed rate. <em>Sell the uncertainty.</em></h1>
+  <p class="lede">
+    Deposit FXRP, buy the principal token at a discount, and redeem it <b>1&#8202;:&#8202;1 at maturity</b>:
+    your return is fixed the moment you buy, no matter what the underlying vault actually earns.
+    The variable yield goes to whoever wants the upside.
+  </p>
+  <div class="chips">
+    <span class="chip"><span class="dot"></span>No liquidation</span>
+    <span class="chip"><span class="dot"></span>Redeems 1&#8202;:&#8202;1 at maturity</span>
+    <span class="chip"><span class="dot"></span>Real PT / YT + YieldSpace AMM</span>
+    <span class="chip"><span class="dot"></span>Non-custodial</span>
+  </div>
+
+  <!-- CALCULATOR -->
+  <section>
+    <div class="sec-label">Lock your rate</div>
+    <div class="card calc">
+      <div class="inputs">
+        <div class="field">
+          <div class="flabel"><span>You deposit</span><b id="depV">5,000 <small>FXRP</small></b></div>
+          <input id="dep" type="range" min="100" max="50000" step="100" value="5000">
+          <div class="scale"><span>100</span><span>50,000</span></div>
+        </div>
+
+        <div class="field">
+          <div class="flabel"><span>Term to maturity</span><b id="termV">90 <small>days</small></b></div>
+          <div class="seg" id="termSeg" role="group" aria-label="Term">
+            <button data-d="30">30d</button>
+            <button data-d="90" aria-pressed="true">90d</button>
+            <button data-d="180">180d</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="flabel"><span>Market liquidity depth</span><b id="poolV">Deep</b></div>
+          <input id="pool" class="amber" type="range" min="0" max="100" step="1" value="82">
+          <div class="scale"><span>Shallow</span><span>Deep</span></div>
+        </div>
+      </div>
+
+      <div class="out">
+        <div class="otop">Fixed rate you lock in</div>
+        <div class="bigrate"><span id="apr">5.00</span><span class="pct">% APR</span></div>
+        <div class="ratesub" id="aprsub">Spot rate on a deep pool · fixed for the full term</div>
+
+        <div class="divider"></div>
+        <div class="rows">
+          <div class="row"><span class="k">Principal tokens received</span><span class="v"><span id="ptOut">5,057</span> <small>PT</small></span></div>
+          <div class="row"><span class="k">Redeemed at maturity (1:1)</span><span class="v"><span id="redeem">5,057</span> <small>FXRP</small></span></div>
+          <div class="row"><span class="k">Locked profit over the term</span><span class="v" style="color:var(--up)">+<span id="profit">57</span> <small>FXRP</small></span></div>
+        </div>
+
+        <div class="slip" id="slip">
+          Spot rate <b id="spotR">5.00%</b> → you lock <b id="lockR">5.00%</b> on this size.
+          <span id="slipmsg">Slippage is negligible: the pool is deep relative to your deposit.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PAYOFF vs VARIABLE -->
+  <section>
+    <div class="sec-label">Why fixed wins when you want certainty</div>
+    <div class="grid2">
+      <div class="card pad">
+        <h3 class="cardtitle">Your payoff is flat. The vault's isn't.</h3>
+        <p class="cardnote">Same deposit, same term. Anchor pays the rate you locked in every scenario; the raw vault pays whatever XRPFi actually yields, which nobody knows in advance.</p>
+        <div id="scenarios"></div>
+        <div class="legend">
+          <span><i style="background:var(--brand)"></i>Anchor (fixed)</span>
+          <span><i style="background:var(--yt)"></i>Raw vault (variable)</span>
+        </div>
+      </div>
+      <div class="card pad">
+        <h3 class="cardtitle">The discount closes to par</h3>
+        <p class="cardnote">The AMM's curve flattens to constant-sum as maturity nears, so 1 PT mechanically converges to 1 FXRP. The convergence is math, not a promise.</p>
+        <canvas id="conv" width="480" height="220" aria-label="PT price converging to par over the term"></canvas>
+        <p class="chartcap" id="convcap"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section>
+    <div class="sec-label">How it works · under the hood</div>
+    <div class="steps">
+      <div class="card step">
+        <div class="n">01</div>
+        <h4>Deposit into a vault</h4>
+        <p>Your FXRP earns real XRPFi yield in an ERC-4626 vault (e.g. Mystic Core FXRP or Bizantine SuperVault), issued as vault shares.</p>
+      </div>
+      <div class="card step">
+        <div class="n">02</div>
+        <h4>Split into PT + YT</h4>
+        <p>The position is tokenized: principal and yield become two separate, tradable tokens.</p>
+        <span class="tag pt">PT = principal</span> <span class="tag yt">YT = yield</span>
+      </div>
+      <div class="card step">
+        <div class="n">03</div>
+        <h4>Buy PT at a discount</h4>
+        <p>On the YieldSpace AMM you buy PT below par. That discount <b>is</b> your fixed rate, locked at purchase.</p>
+      </div>
+      <div class="card step">
+        <div class="n">04</div>
+        <h4>Redeem 1:1 at maturity</h4>
+        <p>Each PT redeems for exactly 1 FXRP of principal. Your return was fixed on day one, whatever the yield did.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div>⚓ <b style="color:var(--soft)">Anchor</b> · a fixed-rate primitive for XRPFi, built for Flare Summer Signal</div>
+    <div><span class="ok">● POC live</span> &nbsp;·&nbsp; <span class="mono">8/8</span> Foundry tests green · incl. a live Flare fork test on a real FXRP vault</div>
+  </footer>
+
+</div>
+</div>
+
+<script>
+(function(){
+  var YEAR=365, TS=1;
+  var dep=document.getElementById('dep'), pool=document.getElementById('pool'), termSeg=document.getElementById('termSeg');
+  var term=90;
+
+  // pool slider 0..100 -> FXRP reserve 15,000 .. 20,000,000 (log); y = x*1.05 bakes in the ~5% discount
+  function poolX(){ var p=+pool.value/100; return Math.round(15000*Math.pow(20000000/15000, p)); }
+  var RATIO=1.05;
+
+  function tClamp(days){ return Math.min((days/YEAR)*TS, 0.95); }
+  function aOf(days){ return 1 - tClamp(days); }
+  function ptPrice(x,y,days){ return Math.pow(x/y, tClamp(days)); }
+  function impliedApr(x,y,days){ var P=ptPrice(x,y,days), T=days/YEAR; return T<=0?0:Math.pow(1/P,1/T)-1; }
+  function swapPtOut(x,y,d,days){ var a=aOf(days); var rhs=Math.pow(x,a)+Math.pow(y,a)-Math.pow(x+d,a);
+    return rhs<=0 ? NaN : y-Math.pow(rhs,1/a); } // rhs<=0 => trade exceeds pool depth
+
+  function fmt(n,dp){ return n.toLocaleString('en-US',{minimumFractionDigits:dp||0,maximumFractionDigits:dp||0}); }
+  function pct(x,dp){ return (x*100).toFixed(dp===undefined?2:dp)+'%'; }
+
+  function poolLabel(x){ if(x<80000) return 'Shallow'; if(x<800000) return 'Moderate'; if(x<6000000) return 'Deep'; return 'Very deep'; }
+
+  function compute(){
+    var d=+dep.value, x=poolX(), y=x*RATIO, days=term, T=days/YEAR;
+    var spotApr=impliedApr(x,y,days);
+    var ptOut=swapPtOut(x,y,d,days);
+    var lockApr=Math.pow(ptOut/d, 1/T)-1;      // annualized realized (after slippage)
+    var profit=ptOut-d;
+
+    document.getElementById('depV').innerHTML=fmt(d)+' <small>FXRP</small>';
+    document.getElementById('termV').innerHTML=(days===365?'1':fmt(days))+' <small>'+(days===365?'year':'days')+'</small>';
+    document.getElementById('poolV').textContent=poolLabel(x);
+
+    var feasible=isFinite(ptOut);
+    document.getElementById('apr').textContent=feasible?(lockApr*100).toFixed(2):'-';
+    document.getElementById('ptOut').textContent=feasible?fmt(ptOut,0):'-';
+    document.getElementById('redeem').textContent=feasible?fmt(ptOut,0):'-';
+    document.getElementById('profit').textContent=feasible?fmt(profit,0):'-';
+    document.getElementById('spotR').textContent=pct(spotApr);
+    document.getElementById('lockR').textContent=feasible?pct(lockApr):'-';
+
+    var slBps=Math.max(0,(spotApr-lockApr))*10000;
+    var slip=document.getElementById('slip'), msg=document.getElementById('slipmsg');
+    if(!feasible || profit<=0){
+      slip.className='slip warn';
+      msg.innerHTML='<b>Your trade is too big for this pool</b>: slippage ate the whole discount. Deeper liquidity or a smaller ticket restores the rate. <b>Liquidity depth is the product.</b>';
+      document.getElementById('aprsub').textContent='Slippage exceeds the discount at this size';
+    } else if(slBps>40){
+      slip.className='slip warn';
+      msg.innerHTML='Your size moves this pool: about <b>'+Math.round(slBps)+' bps</b> of slippage. Deeper liquidity closes the gap.';
+      document.getElementById('aprsub').textContent='Fixed for the full '+(days===365?'year':days+' days');
+    } else {
+      slip.className='slip';
+      msg.innerHTML='Slippage is negligible (~'+Math.round(slBps)+' bps): the pool is deep relative to your deposit.';
+      document.getElementById('aprsub').textContent='Fixed for the full '+(days===365?'year':days+' days');
+    }
+
+    renderScenarios(feasible?profit:0, d, T, lockApr);
+    drawConv(x,y,days);
+  }
+
+  // payoff: Anchor fixed vs raw vault under bear/base/bull realized yields
+  function renderScenarios(anchorProfit, d, T, lockApr){
+    var host=document.getElementById('scenarios');
+    var scn=[{n:'Bear · 1.5% APR',g:0.015},{n:'Base · 5% APR',g:0.05},{n:'Bull · 12% APR',g:0.12}];
+    var vals=scn.map(function(s){ return {n:s.n, a:anchorProfit, v:d*(Math.pow(1+s.g,T)-1)}; });
+    var max=Math.max.apply(null, vals.map(function(o){return Math.max(o.a,o.v)})); max=max||1;
+    host.innerHTML=vals.map(function(o){
+      var wA=Math.max(3,o.a/max*100), wV=Math.max(3,o.v/max*100);
+      var win = o.a>=o.v ? '<b style="color:var(--up)">Anchor +'+fmt(o.a,0)+'</b>' : '<b style="color:var(--yt)">Vault +'+fmt(o.v,0)+'</b>';
+      return '<div class="scn"><div class="sh"><span>'+o.n+'</span><span>'+win+'</span></div>'+
+        '<div class="bar" style="margin-bottom:5px"><div class="fill anchor" style="width:'+wA+'%">+'+fmt(o.a,0)+'</div></div>'+
+        '<div class="bar"><div class="fill varb" style="width:'+wV+'%">+'+fmt(o.v,0)+'</div></div></div>';
+    }).join('');
+  }
+
+  function drawConv(x,y,days){
+    var c=document.getElementById('conv'), ctx=c.getContext('2d');
+    var dpr=window.devicePixelRatio||1, W=c.clientWidth, H=220;
+    c.width=W*dpr; c.height=H*dpr; ctx.scale(dpr,dpr);
+    ctx.clearRect(0,0,W,H);
+    var cs=getComputedStyle(document.documentElement);
+    var line=cs.getPropertyValue('--line').trim(), brand=cs.getPropertyValue('--brand').trim(),
+        accent=cs.getPropertyValue('--accent-fill').trim(), soft=cs.getPropertyValue('--faint').trim(),
+        ink=cs.getPropertyValue('--soft').trim();
+    var padL=44,padR=14,padT=16,padB=26, gw=W-padL-padR, gh=H-padT-padB;
+    var p0=ptPrice(x,y,days), lo=Math.min(p0,0.97), hi=1.005;
+    function X(dleft){ return padL + (1-dleft/days)*gw; }        // dleft: days remaining -> left=start
+    function Y(p){ return padT + (1-(p-lo)/(hi-lo))*gh; }
+    // grid: par line
+    ctx.strokeStyle=line; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(padL,Y(1)); ctx.lineTo(W-padR,Y(1)); ctx.stroke();
+    ctx.fillStyle=soft; ctx.font='11px '+cs.getPropertyValue('--sans');
+    ctx.fillText('par 1.00', padL, Y(1)-6);
+    ctx.textAlign='right'; ctx.fillText(p0.toFixed(3), padL-8, Y(p0)+4);
+    ctx.textAlign='left';
+    // axis labels
+    ctx.fillStyle=soft; ctx.fillText((days===365?'1y':days+'d')+' left', padL, H-8);
+    ctx.textAlign='right'; ctx.fillText('maturity', W-padR, H-8); ctx.textAlign='left';
+    // curve
+    ctx.strokeStyle=brand; ctx.lineWidth=2.5; ctx.beginPath();
+    for(var i=0;i<=60;i++){ var dleft=days*(1-i/60); var p=ptPrice(x,y,dleft); var px=X(dleft), py=Y(p);
+      if(i===0)ctx.moveTo(px,py); else ctx.lineTo(px,py); }
+    ctx.stroke();
+    // fill under
+    ctx.lineTo(X(0),Y(lo)); ctx.lineTo(X(days),Y(lo)); ctx.closePath();
+    ctx.fillStyle=brand+'18'; ctx.fill();
+    // endpoints
+    ctx.fillStyle=accent; ctx.beginPath(); ctx.arc(X(days),Y(p0),4,0,7); ctx.fill();
+    ctx.fillStyle=brand; ctx.beginPath(); ctx.arc(X(0),Y(1),4,0,7); ctx.fill();
+    document.getElementById('convcap').innerHTML='PT starts at <b>'+p0.toFixed(3)+'</b> FXRP and rises to <b>1.000</b> at maturity. Buying the gap is buying a fixed rate.';
+  }
+
+  dep.addEventListener('input',compute);
+  pool.addEventListener('input',compute);
+  Array.prototype.forEach.call(termSeg.querySelectorAll('button'),function(b){
+    b.addEventListener('click',function(){
+      Array.prototype.forEach.call(termSeg.querySelectorAll('button'),function(x){x.setAttribute('aria-pressed','false')});
+      b.setAttribute('aria-pressed','true'); term=+b.dataset.d; compute();
+    });
+  });
+  window.addEventListener('resize',function(){ var x=poolX(); drawConv(x,x*RATIO,term); });
+  compute();
+})();
+</script>
