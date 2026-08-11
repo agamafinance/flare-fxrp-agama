@@ -51,3 +51,8 @@ interface IFdcVerification {
 interface IFdcRegistry {
     function getContractAddressByName(string calldata _name) external view returns (address);
 }
+
+interface IRelay {
+    // finalized Merkle root for a protocol's voting round (FDC protocol id = 200)
+    function merkleRoots(uint256 _protocolId, uint256 _votingRoundId) external view returns (bytes32);
+}
