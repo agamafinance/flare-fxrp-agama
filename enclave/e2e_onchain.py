@@ -25,8 +25,10 @@ YT = os.environ.get("YT", "0xA84437A6CAEeeAB1eB208e6E686a761A0B7cDa1d")
 PK = os.environ["PRIVATE_KEY"]
 SELLER = subprocess.run(["cast", "wallet", "address", "--private-key", PK], capture_output=True, text=True).stdout.strip()
 ONE = 1_000_000
-YT_AMT = 100 * ONE
+YT_AMT = int(os.environ.get("YT_AMT", "100")) * ONE
 RESERVE = 2 * ONE
+FUND_AMT = int(os.environ.get("FUND_AMT", "100")) * ONE   # FXRP given to each market maker
+MINTABLE = os.environ.get("MINTABLE", "1") == "1"          # demo FXRP mints; real FXRP is transferred
 
 def sh(*a):
     r = subprocess.run(list(a), capture_output=True, text=True)
@@ -67,7 +69,8 @@ print("enclave", requests.get(ENCLAVE_URL + "/pubkey").json()["address"], "trust
 mm1, mm2, attacker = Account.create(), Account.create(), Account.create()
 for mm in (mm1, mm2):
     send(PK, mm.address, "", value="1ether")           # gas for the approve
-    send(PK, FXRP, "mint(address,uint256)", mm.address, 100 * ONE)
+    if MINTABLE: send(PK, FXRP, "mint(address,uint256)", mm.address, FUND_AMT)
+    else: send(PK, FXRP, "transfer(address,uint256)", mm.address, FUND_AMT)  # real FXRP: fund from deployer
     send(mm.key.hex(), FXRP, "approve(address,uint256)", RFQ, 2**256 - 1)
 
 print("STEP 1 - seller opens a confidential RFQ on-chain (escrows YT, sets a reserve)")

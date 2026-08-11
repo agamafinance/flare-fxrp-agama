@@ -47,10 +47,15 @@ def main():
                  memos=[Memo(memo_data="f6d3C9Ed2115A5197F96f6189F6D63B51022Fe16")])
     h = submit_and_wait(tx, client, payer).result["hash"]
     print("XRPL tx", h)
-    # 3. prepareRequest
+    # 3. prepareRequest (retry: the verifier's XRPL indexer lags a few seconds behind the ledger)
     body = {"attestationType": ATT_PAYMENT, "sourceId": SRC_TESTXRP,
             "requestBody": {"transactionId": "0x" + h, "inUtxo": "0", "utxo": "0"}}
-    pr = requests.post(VERIFIER, headers={"X-API-KEY": API_KEY}, json=body, timeout=30).json()
+    for _ in range(12):
+        pr = requests.post(VERIFIER, headers={"X-API-KEY": API_KEY}, json=body, timeout=30).json()
+        if pr.get("status") == "VALID":
+            break
+        print("prepareRequest:", pr.get("status"), "- waiting for the XRPL tx to be indexed")
+        time.sleep(15)
     assert pr["status"] == "VALID", pr
     abi = pr["abiEncodedRequest"]
     # 4. requestAttestation on FdcHub

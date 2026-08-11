@@ -51,10 +51,10 @@ Agama uses five of Flare's enshrined protocols, each doing real work, not a supe
 | Protocol | How Agama uses it |
 | --- | --- |
 | **FAssets (FXRP)** | The underlying asset. The product is fixed-rate savings on bridged XRP. |
-| **Confidential Compute (TEE)** | The YT demand side runs as a confidential RFQ in a Confidential Space enclave: market makers quote privately, only the winning settlement is revealed. The enclave key is registered only via a real Confidential Space attestation **JWT** verified on chain, bound to the approved code image. |
-| **FTSO** | The enclave and front read live XRP/USD to bound quotes and denominate the fixed rate in USD. |
+| **Confidential Compute (TEE)** | The YT demand side runs as a confidential RFQ in a Confidential Space enclave: market makers quote privately, only the winning settlement is revealed. The enclave key is registered only via a real Confidential Space attestation **JWT** verified on chain that proves a **non-debuggable, production Intel TDX** enclave (`hwmodel GCP_INTEL_TDX`, `swname CONFIDENTIAL_SPACE`, `dbgstat disabled-since-boot`) running the approved code image. |
+| **FTSO** | The enclave prices every quote's premium in USD via the live XRP/USD feed and **rejects any quote outside a USD band** (the accept/reject decision depends on the oracle, not just token units); the front denominates the fixed rate in USD. |
 | **Secure RNG** | Breaks best-price ties between market makers fairly and verifiably in the confidential matcher. |
-| **FDC** | Native-XRP deposits: an FDC Payment proof of an XRPL transfer is verified on chain (against the Relay Merkle root) before crediting. Proven end to end with a real XRPL testnet payment and its live attestation. |
+| **FDC** | Native-XRP on-ramp: an FDC Payment proof of an XRPL transfer is verified on chain (against the Relay Merkle root), and `XrpOnRamp.depositAndLock` then **releases FXRP and locks the fixed rate through Anchor in the same call** so no FXRP moves without a real proof. Proven end to end with a live XRPL payment and its attestation. |
 
 ## Proven
 
@@ -99,11 +99,14 @@ Compute (Bounty 2).
 manually set key. `ConfidentialSpaceRegistry` registers the enclave key only after verifying, on
 chain, a real **GCP Confidential Space attestation JWT**: RS256 (`rsa/RsaVerify.sol` via the modexp
 precompile) against Google's confidentialspace-sign key, then it base64url-decodes the token payload
-and requires the issuer, the approved `image_digest`, and the presented enclave key as the token
-`eat_nonce`. `ConfidentialYtRfq` reads its trusted key from the registry.
+and requires the issuer, the approved `image_digest`, the presented enclave key as the token
+`eat_nonce`, and — crucially — that the enclave is a **non-debuggable production Intel TDX** one:
+`hwmodel GCP_INTEL_TDX`, `swname CONFIDENTIAL_SPACE`, `dbgstat disabled-since-boot`. A debug enclave
+(where the operator could read or forge the key) and a non-TDX platform are both rejected on chain
+(two dedicated tests). `ConfidentialYtRfq` reads its trusted key from the registry.
 
 **This runs live, not as scaffolding.** The enclave workload (`enclave/matcher.py`) runs continuously
-inside a real **GCP Confidential Space VM (Intel TDX)**: it generates its signing key inside the TEE
+inside a real **production GCP Confidential Space VM (Intel TDX)**: it generates its signing key inside the TEE
 (nobody, including us, holds the private key), requests a real Google-signed attestation token binding
 that key to its image digest, and serves `/attestation` and `/settle`. That real Google token is
 verified on chain by `ConfidentialSpaceRegistry` (`test/ConfidentialSpaceGoogle.t.sol` replays it
@@ -135,16 +138,19 @@ Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can tr
 | PT | `0x31B1FA947C2b332DA7b348C9421d3C608E3f1E93` |
 | YT | `0xA84437A6CAEeeAB1eB208e6E686a761A0B7cDa1d` |
 | PtAmm | `0x541fe9998696EEb7Fb66C9058CA7Cc263670fa31` |
-| ConfidentialYtRfq (signed quotes + reserve, gated by the live enclave key) | `0xE316db654d01295bE42bD25E23Af8Ce31D6284B1` |
-| ConfidentialSpaceRegistry (real Google token verified on chain) | `0xdD11d93EC892df2C67bFf867C6891140a8D05c53` |
-| Live enclave (GCP Confidential Space, Intel TDX) | key `0x611218C983394c4C5022dc91bCf9dEB7cBe24f3A`, image `sha256:76ef61c3…3d3598` |
+| ConfidentialYtRfq (signed quotes + reserve, gated by the live enclave key) | `0x2046d700eC62D21d897746aFd978F74DDF9b7C58` |
+| ConfidentialSpaceRegistry (real Google token, production TDX claims verified on chain) | `0x18210F6885f44e5C173E6fC185fcBe3A77eFA2Cc` |
+| Live enclave (GCP Confidential Space, **production** Intel TDX) | key `0x87a67CCA80382c8E7B241C1791F43Bc1072910a8`, image `sha256:bbe39b21…cb13c0` |
 | FtsoReader | `0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f` |
 | FTestXRP (real FAsset, minted from native XRP) | `0x0b6A3645c240605887a5532109323A3E12273dc7` |
+| XrpOnRamp (FDC proof releases FXRP + locks) | `0x26C769b06bfcFB5FaEC9c5c5fe26C3147B74ea80` |
 
-A second instance with a short (10 minute) maturity is deployed for demoing the full lock to
-redeem cycle live: Anchor `0xd84508307C035F409777e2b5E5eCa90bE34Eb292`.
+**On the real asset.** The same stack also runs on the real FAsset FXRP (FTestXRP), not just the demo
+token: Anchor `0x1BEaC6Fa4A0F0F113b31678eE630DF0fE93A2b78`, YT `0x793b671DEbCd2169Ce7Dce8A98d206A9Af2c4592`,
+and the confidential RFQ `0x5114AB1548B4B88bc75bc73ED222Fa451783Bcea` settled a live sealed-quote
+auction in real FXRP. Liquidity there is bounded by the real FXRP held.
 
-Explorer: https://coston2-explorer.flare.network/address/0xC0E346206B5d6446f69522D29A88BC45B2B5c719
+Explorer: https://coston2-explorer.flare.network/address/0x2046d700eC62D21d897746aFd978F74DDF9b7C58
 
 ## Run it
 
@@ -179,9 +185,10 @@ see [`DEPLOY.md`](./DEPLOY.md).
 - **The enclave runs in a live GCP Confidential Space TDX** and a settlement was verified on chain
   end to end. Quotes are authenticated (each is signed by its MM), the RFQ terms and the winner's
   solvency are read from chain, and the seller's reserve is enforced on-chain, so the `/settle`
-  endpoint is safe to expose. The VM is a single instance (no HA/redundancy) and uses the debug CS
-  image so the attestation is also visible in the serial log. The endpoint bounds work per request
-  and rate-limits globally; a production deployment would add per-MM authorization/allowlisting.
+  endpoint is safe to expose. It runs on the **production** Confidential Space image and the on-chain
+  registry enforces non-debuggable production TDX claims. The VM is a single instance (no HA), the
+  endpoint bounds work per request and rate-limits globally; a production deployment would add per-MM
+  authorization/allowlisting and a sealed, persistent enclave key (today a reboot rotates the key).
 - **The live Coston2 demo uses a mock yield vault.** There is no real single-asset FXRP yield vault
   on Coston2 (the real ones, e.g. bizFXRP, are on Flare mainnet, which `test/ForkVault.t.sol`
   binds to for deposit). The fixed rate is manufactured by the AMM discount over that mock; the
