@@ -38,7 +38,7 @@ nears, the YieldSpace curve flattens to constant-sum and PT converges to par mec
 | `PtAmm.sol` | A real YieldSpace AMM (`x^(1-t) + y^(1-t) = k`) for PT vs FXRP, decimals-aware (real FXRP is 6 decimals), PRBMath fixed point. Buying PT locks a fixed rate. |
 | `Anchor.sol` | The user-facing router. One call to lock a fixed rate, a quote for the front, and 1:1 redemption at maturity. |
 | `ConfidentialYtRfq.sol` | The confidential YT demand side. Market makers quote privately inside a TEE; the enclave signs only the winning settlement, which this contract verifies (against the attestation-gated key) and executes. |
-| `EnclaveRegistry.sol` + `rsa/RsaVerify.sol` | Attestation-gated enclave key. The enclave key is registered only after verifying an RS256 attestation (the same primitive GCP Confidential Space uses, checked on chain via the modexp precompile) that binds the key to the approved code image. No manual `setEnclaveSigner`. |
+| `tee/ConfidentialSpaceRegistry.sol` + `rsa/RsaVerify.sol` | Attestation-gated enclave key, following the real GCP Confidential Space flow. Verifies a Confidential Space attestation **JWT** on chain: RS256 (via the modexp precompile) against Google's signer key, then base64url-decodes the payload and requires the approved `image_digest` and the presented enclave key as the token `eat_nonce`. `EnclaveRegistry.sol` is a simpler RS256-over-a-statement variant. |
 | `FtsoReader.sol` | Reads the enshrined FTSOv2 oracle to denominate FXRP positions in USD (front and enclave). |
 | `XrpOnRamp.sol` + `fdc/IFdc.sol` | Native-XRP on-ramp: verifies an FDC Payment proof against the enshrined FdcVerification, so real XRP from the XRPL is credited on Flare with no bridge trust. |
 | `interfaces/IERC4626.sol` | The standard vault surface the splitter codes against, so a real vault is a one-line swap. |
@@ -51,14 +51,14 @@ Agama uses five of Flare's enshrined protocols, each doing real work, not a supe
 | Protocol | How Agama uses it |
 | --- | --- |
 | **FAssets (FXRP)** | The underlying asset. The product is fixed-rate savings on bridged XRP. |
-| **Confidential Compute (TEE)** | The YT demand side runs as a confidential RFQ in a Confidential Space enclave: market makers quote privately, only the winning settlement is revealed. The enclave key is registered only via an RS256 attestation verified on chain, bound to the approved code image. |
+| **Confidential Compute (TEE)** | The YT demand side runs as a confidential RFQ in a Confidential Space enclave: market makers quote privately, only the winning settlement is revealed. The enclave key is registered only via a real Confidential Space attestation **JWT** verified on chain, bound to the approved code image. |
 | **FTSO** | The enclave and front read live XRP/USD to bound quotes and denominate the fixed rate in USD. |
 | **Secure RNG** | Breaks best-price ties between market makers fairly and verifiably in the confidential matcher. |
 | **FDC** | Native-XRP deposits: an FDC Payment proof of an XRPL transfer is verified on chain (against the Relay Merkle root) before crediting. Proven end to end with a real XRPL testnet payment and its live attestation. |
 
 ## Proven
 
-`forge test` runs **22 tests, all green**, including:
+`forge test` runs **27 tests, all green**, including:
 
 - The full lifecycle: split, YT captures the yield, PT redeems principal 1:1.
 - Sell YT to lock certainty; the yield accounting splits correctly on transfer.
@@ -73,9 +73,9 @@ Agama uses five of Flare's enshrined protocols, each doing real work, not a supe
 - Live reads of the enshrined **FTSO** (XRP/USD) and **Secure RNG** on a Coston2 fork.
 - The **FDC** Payment-proof verification path wired to the live FdcVerification, rejecting an
   unattested proof.
-- **Attestation-gated enclave registration**: a real RS256 attestation is verified on chain (via
-  the modexp precompile); tampered signatures, forged enclave keys, and unapproved code images are
-  all rejected.
+- **Confidential Space attestation on chain**: a real-format CS attestation JWT is verified (RS256
+  via modexp, base64url payload decode, issuer + `image_digest` + `eat_nonce` checks); tampered
+  signatures, forged enclave keys, and unapproved code images are all rejected.
 - **A real native-XRP round-trip**: a real XRPL testnet payment, attested by the FDC, is verified
   on chain against the live Relay Merkle root and credited by `XrpOnRamp` (replay-protected).
 
@@ -95,13 +95,17 @@ This makes the same product qualify for both hackathon tracks: an interoperable 
 (Bounty 1) whose counterparty market is a private application built with Flare Confidential
 Compute (Bounty 2).
 
-**Attestation-gated trust.** The contract does not trust a manually set key. `EnclaveRegistry`
-registers the enclave key only after verifying, on chain, an RS256 attestation that binds the key
-to the enclave's approved code image (`rsa/RsaVerify.sol` runs RSASSA-PKCS1v1.5/SHA-256 through the
-modexp precompile, the exact primitive GCP Confidential Space signs its attestation with).
-`ConfidentialYtRfq` reads its trusted key from the registry. In this POC the attester key is a test
-RSA key and the enclave logic runs via `script/Enclave.s.sol`; for production you point the registry
-at Google's Confidential Space attestation key and run the identical matcher inside a TDX enclave.
+**Attestation-gated trust, following the Confidential Space docs.** The contract does not trust a
+manually set key. `ConfidentialSpaceRegistry` registers the enclave key only after verifying, on
+chain, a real **GCP Confidential Space attestation JWT**: RS256 (`rsa/RsaVerify.sol` via the modexp
+precompile) against Google's confidentialspace-sign key, then it base64url-decodes the token payload
+and requires the issuer, the approved `image_digest`, and the presented enclave key as the token
+`eat_nonce`. `ConfidentialYtRfq` reads its trusted key from the registry. The enclave workload
+(`enclave/matcher.py`, `enclave/Dockerfile`) is the TDX-ready container; its signature is
+byte-for-byte compatible with the RFQ. In this POC the attester is a test RSA key and the token is
+in the exact CS format (`test/vectors/cs_attestation_jwt.json`), so the full on-chain verification
+is provable without GCP; the one step that needs a GCP account is producing a Google-signed token
+(see `enclave/README.md`).
 
 ## Live on Coston2 (chainId 114)
 
@@ -116,9 +120,10 @@ Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can tr
 | PT | `0x4557491bCd8Da8BD2e32861b5C3CB70EDCB3D1aE` |
 | YT | `0x04A05b47fd57E5230a428111B9c3B45c16493752` |
 | PtAmm | `0x77D28482ace00b7760766a7699e6DcdDeAeed82E` |
-| ConfidentialYtRfq | `0x460BC8ef9A5c7aa9D77212261C527dd20Fb3b4Aa` |
-| EnclaveRegistry | `0x327930be6F5552F1Bc03322dB11a974D629902FE` |
+| ConfidentialYtRfq | `0x6020531B571dbFC9Df4d905DA29c0b2bB7A7e48F` |
+| ConfidentialSpaceRegistry | `0x243f098E589118fB0F5e8a6f13f987Da170b5D3a` |
 | FtsoReader | `0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f` |
+| FTestXRP (real FAsset, minted from native XRP) | `0x0b6A3645c240605887a5532109323A3E12273dc7` |
 
 A second instance with a short (10 minute) maturity is deployed for demoing the full lock to
 redeem cycle live: Anchor `0xd84508307C035F409777e2b5E5eCa90bE34Eb292`.
@@ -152,6 +157,22 @@ see [`DEPLOY.md`](./DEPLOY.md).
   wiring the FAssets mint that follows is the next step.
 - **Liquidity is the product.** The locked rate is the discount minus slippage. A trade that is
   large relative to the pool eats its own discount, so depth matters.
+
+## Known limitations (honest status)
+
+- **The enclave does not yet run in a live GCP TDX.** The on-chain verification follows the real
+  Confidential Space attestation format and the workload is TDX-ready, but the attester is a test
+  RSA key and the code image digest is a placeholder. Producing a Google-signed token needs a GCP
+  Confidential Space deployment (`enclave/README.md`). Until then this is verified scaffolding, not
+  a deployed confidential app.
+- **The live Coston2 demo uses a mock yield vault.** There is no real single-asset FXRP yield vault
+  on Coston2 (the real ones, e.g. bizFXRP, are on Flare mainnet, which `test/ForkVault.t.sol`
+  binds to for deposit). The fixed rate is manufactured by the AMM discount over that mock; the
+  real-asset path is proven separately by minting real FTestXRP from native XRP.
+- **YT escrowed in the RFQ accrues yield to the RFQ contract** for the (short) escrow window; a
+  production version routes that to the winner. POC simplification.
+- **Two-sided liquidity is unproven with real participants.** The confidential RFQ solves the YT
+  demand problem in design; it needs real market makers and PT/YT LPs to be proven economically.
 
 ## Disclaimer
 
