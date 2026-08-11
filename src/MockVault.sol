@@ -34,7 +34,7 @@ contract MockVault is IERC4626 {
 
     function deposit(uint256 assets, address receiver) external returns (uint256 shares) {
         underlying.transferFrom(msg.sender, address(this), assets);
-        shares = (totalShares == 0 || totalAssetsHeld == 0) ? assets : (assets * totalShares) / totalAssetsHeld;
+        shares = convertToShares(assets); // virtual-share offset: no first-deposit inflation attack
         totalShares += shares;
         totalAssetsHeld += assets;
         balanceOf[receiver] += shares;
@@ -52,12 +52,14 @@ contract MockVault is IERC4626 {
         underlying.transfer(receiver, assets);
     }
 
+    // +1 virtual share and asset (ERC-4626 inflation-attack mitigation): a first depositor cannot be
+    // diluted to zero shares, and the seed cannot be stolen by a deposit(1)+addYield front-run.
     function convertToAssets(uint256 shares) public view returns (uint256) {
-        return totalShares == 0 ? shares : (shares * totalAssetsHeld) / totalShares;
+        return (shares * (totalAssetsHeld + 1)) / (totalShares + 1);
     }
 
     function convertToShares(uint256 assets) public view returns (uint256) {
-        return totalAssetsHeld == 0 ? assets : (assets * totalShares) / totalAssetsHeld;
+        return (assets * (totalShares + 1)) / (totalAssetsHeld + 1);
     }
 
     /* ----------------------- ERC20 (vault shares) ---------------------------- */

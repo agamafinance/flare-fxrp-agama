@@ -204,6 +204,22 @@ see [`DEPLOY.md`](./DEPLOY.md).
 - **The real-FXRP instance has a small pool** (bounded by the FXRP held), so its lock rate is only
   meaningful for tiny trades; the confidential RFQ on it (which does not touch the pool) is the point.
 
+### Residual audit findings (architectural, not one-line fixes)
+
+Three adversarial multi-agent audit passes closed the critical (attestation bypass) and every cleanly
+fixable high/medium. What remains needs a redesign, not a patch, and is out of scope for a testnet PoC:
+
+- **Yield accounting on a non-monotonic vault.** Yield is credited from the vault's live
+  `convertToAssets` mark; a share-price that rises then falls can over-credit YT. It is bounded by a
+  realized-surplus cap and is safe with a monotonic-price vault (lending vaults, and the demo mock);
+  a production build on a variable-price vault needs realized-yield (not spot-mark) accounting.
+- **On-ramp same-block sandwich MEV.** The slippage floor is derived from the AMM, which a searcher
+  can move in the same block. Bounding it fully needs an FTSO/TWAP-anchored floor or a payer-signed
+  `minPtOut`, not an at-market quote.
+- **RNG tie-break grinding.** Equal-price ties are broken with the round's public RNG, which an MM can
+  grind addresses against. The economic impact is nil (ties are at equal price, so the seller is
+  indifferent); eliminating it needs a commit-reveal on quotes.
+
 ## Disclaimer
 
 Proof of concept, unaudited, testnet only. Not financial advice.

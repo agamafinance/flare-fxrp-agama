@@ -58,9 +58,9 @@ contract Anchor {
 
     /// After maturity: redeem PT 1:1 for FXRP principal. User must approve PT to Anchor first.
     function redeem(uint256 ptAmount) external returns (uint256 fxrpOut) {
-        pt.transferFrom(msg.sender, address(this), ptAmount);
+        require(pt.transferFrom(msg.sender, address(this), ptAmount), "pt in");
         fxrpOut = splitter.redeemPrincipal(ptAmount);
-        fxrp.transfer(msg.sender, fxrpOut);
+        require(fxrp.transfer(msg.sender, fxrpOut), "fxrp out");
         emit Redeemed(msg.sender, ptAmount, fxrpOut);
     }
 }

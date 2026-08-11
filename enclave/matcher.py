@@ -73,6 +73,16 @@ def _call(to, data):
     return requests.post(RPC, json={"jsonrpc": "2.0", "id": 1, "method": "eth_call",
                                     "params": [{"to": to, "data": data}, "latest"]}, timeout=15).json()["result"]
 
+_CHAIN_ID = None
+def chain_id_ok(cid):
+    # the caller supplies chainId (it goes into the signed settlement digest); it MUST match the chain
+    # the enclave actually reads, or a settlement could be replayed on another chain (CREATE2 same-addr)
+    global _CHAIN_ID
+    if _CHAIN_ID is None:
+        _CHAIN_ID = int(requests.post(RPC, json={"jsonrpc": "2.0", "id": 1, "method": "eth_chainId",
+                                                 "params": []}, timeout=15).json()["result"], 16)
+    return cid == _CHAIN_ID
+
 def _resolve(name):
     return "0x" + _call(REGISTRY, "0x82760fca" + abi_encode(["string"], [name]).hex())[-40:]
 
@@ -184,6 +194,7 @@ class H(BaseHTTPRequestHandler):
             quotes = d["quotes"]
             assert len(quotes) <= MAX_QUOTES, "too many quotes"               # bound the work per request
             rfq, chain_id, rfq_id = d["rfq"], int(d["chainId"]), int(d["rfqId"])
+            assert chain_id_ok(chain_id), "chainId does not match the enclave's chain"  # anti cross-chain replay
             assert rfq_trusts_enclave(rfq), "rfq does not trust this enclave"  # cheapest gate first: one read
             seller, yt_amount, min_price, is_open = read_rfq(rfq, rfq_id)      # authoritative terms
             assert is_open, "rfq not open"
