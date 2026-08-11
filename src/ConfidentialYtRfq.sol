@@ -2,6 +2,7 @@
 pragma solidity ^0.8.25;
 
 import "./interfaces/IERC4626.sol"; // IERC20
+import "./EnclaveRegistry.sol"; // IEnclaveRegistry
 
 /**
  * @title ConfidentialYtRfq
@@ -23,8 +24,7 @@ import "./interfaces/IERC4626.sol"; // IERC20
 contract ConfidentialYtRfq {
     IERC20 public immutable fxrp;
     IERC20 public immutable yt;
-    address public enclaveSigner; // set from the enclave's remote attestation
-    address public owner;
+    IEnclaveRegistry public immutable registry; // enclave key is attestation-gated, not manually set
 
     struct Rfq {
         address seller;
@@ -47,21 +47,16 @@ contract ConfidentialYtRfq {
     event RfqOpened(uint256 indexed rfqId, address indexed seller, uint256 ytAmount);
     event RfqSettled(uint256 indexed rfqId, address indexed seller, address indexed winner, uint256 ytAmount, uint256 price);
     event RfqCancelled(uint256 indexed rfqId);
-    event EnclaveSignerSet(address signer);
 
-    constructor(IERC20 _fxrp, IERC20 _yt, address _enclaveSigner) {
+    constructor(IERC20 _fxrp, IERC20 _yt, IEnclaveRegistry _registry) {
         fxrp = _fxrp;
         yt = _yt;
-        enclaveSigner = _enclaveSigner;
-        owner = msg.sender;
-        emit EnclaveSignerSet(_enclaveSigner);
+        registry = _registry;
     }
 
-    /// Register the enclave key (in production this follows a verified remote attestation).
-    function setEnclaveSigner(address s) external {
-        require(msg.sender == owner, "only owner");
-        enclaveSigner = s;
-        emit EnclaveSignerSet(s);
+    /// The trusted enclave key, sourced from the attestation-gated registry (no manual override).
+    function enclaveSigner() public view returns (address) {
+        return registry.enclaveSigner();
     }
 
     /// Seller escrows YT and opens a confidential RFQ. MMs then quote off-chain to the enclave.
@@ -87,7 +82,7 @@ contract ConfidentialYtRfq {
         require(q.seller == s.seller && q.ytAmount == s.ytAmount, "mismatch");
         require(block.timestamp <= s.deadline, "expired");
         address rec = ecrecover(settlementDigest(s), v, r, sig_s);
-        require(rec != address(0) && rec == enclaveSigner, "bad enclave sig");
+        require(rec != address(0) && rec == enclaveSigner(), "bad enclave sig");
 
         q.open = false;
         // winner pays the FXRP premium to the seller; escrowed YT goes to the winner

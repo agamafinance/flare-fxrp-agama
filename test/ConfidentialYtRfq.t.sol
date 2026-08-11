@@ -7,6 +7,12 @@ import "../src/MockVault.sol";
 import "../src/YieldSplitter.sol";
 import "../src/ConfidentialYtRfq.sol";
 
+/// Minimal registry stand-in: the attestation-gated registration is tested in EnclaveRegistry.t.sol.
+contract MockEnclaveRegistry is IEnclaveRegistry {
+    address public enclaveSigner;
+    constructor(address s) { enclaveSigner = s; }
+}
+
 /**
  * The confidential YT RFQ: a seller who wants a fixed rate sells their YT to the best market-maker
  * quote. Two MMs quote privately to the enclave; the enclave signs only the winner. The contract
@@ -37,7 +43,7 @@ contract ConfidentialYtRfqTest is Test {
         vault = new MockVault(fxrp);
         splitter = new YieldSplitter(vault, block.timestamp + 90 days);
         ytTok = splitter.yt();
-        rfq = new ConfidentialYtRfq(IERC20(address(fxrp)), IERC20(address(ytTok)), enclave);
+        rfq = new ConfidentialYtRfq(IERC20(address(fxrp)), IERC20(address(ytTok)), new MockEnclaveRegistry(enclave));
 
         // seller deposits FXRP -> PT + YT, keeps PT (certainty), will sell YT
         fxrp.mint(seller, 1000 * ONE);
