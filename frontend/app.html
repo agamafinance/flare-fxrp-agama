@@ -81,7 +81,8 @@
     <div class="quote">
       <div><span class="bigrate"><span id="apr">–</span><small>% APR fixed</small></span></div>
       <div class="qrow"><span>PT you receive</span><b><span id="ptout">–</span> PT</b></div>
-      <div class="qrow"><span>Locked profit at maturity</span><b style="color:var(--up)"><span id="profit">–</span> FXRP</b></div>
+      <div class="qrow"><span>Locked profit at maturity</span><b style="color:var(--up)"><span id="profit">–</span> FXRP <span id="profitUsd" style="color:var(--faint);font-weight:500"></span></b></div>
+      <div class="qrow"><span>XRP/USD · live FTSO oracle</span><b>$<span id="xrpusd">–</span></b></div>
     </div>
 
     <button id="lock" class="btn-primary" disabled>Connect wallet to lock</button>
@@ -140,6 +141,7 @@ const CONFIG = {
     yt:'0x04A05b47fd57E5230a428111B9c3B45c16493752',
     rfq:'0xFc2440629530a11915E65E3261779E37f70e3790',
     splitter:'0xBb4c3A08E108465b305205D92C089cd1a63976b6',
+    ftso:'0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f',
   },
   coston2demo: { // short maturity (~10 min) so the full lock -> redeem cycle is demoable live
     chainId: 114, name:'Coston2', rpc:'https://coston2-api.flare.network/ext/C/rpc',
@@ -166,6 +168,9 @@ const ERC20_ABI = [
 const SPLITTER_ABI = [
   {type:'function',name:'split',stateMutability:'nonpayable',inputs:[{type:'uint256'}],outputs:[]},
 ];
+const FTSO_ABI = [
+  {type:'function',name:'xrpUsd1e18',stateMutability:'view',inputs:[],outputs:[{type:'uint256'}]},
+];
 const RFQ_ABI = [
   {type:'function',name:'openRfq',stateMutability:'nonpayable',inputs:[{type:'uint256'}],outputs:[{type:'uint256'}]},
   {type:'function',name:'cancel',stateMutability:'nonpayable',inputs:[{type:'uint256'}],outputs:[]},
@@ -175,12 +180,19 @@ const RFQ_ABI = [
 const MAX = (2n**256n)-1n;
 const DEC = 6; // FXRP / PT decimals
 
-let net = 'coston2', cfg = CONFIG.coston2, pub, wallet, account, maturity = 0n, myRfqId = 0n;
+let net = 'coston2', cfg = CONFIG.coston2, pub, wallet, account, maturity = 0n, myRfqId = 0n, xrpUsd = 0;
 const $ = id => document.getElementById(id);
 const fmt = (v,dp=2) => Number(formatUnits(v, DEC)).toLocaleString('en-US',{maximumFractionDigits:dp});
 function setStatus(msg, kind=''){ const s=$('status'); s.textContent=msg; s.className='status '+kind; }
 
 function makePublic(){ pub = createPublicClient({ transport: http(cfg.rpc) }); }
+
+async function readXrp(){
+  if(!cfg.ftso){ xrpUsd = 0; $('xrpusd').textContent='–'; return; }
+  try{ const v = await pub.readContract({address:cfg.ftso, abi:FTSO_ABI, functionName:'xrpUsd1e18'});
+    xrpUsd = Number(formatUnits(v, 18)); $('xrpusd').textContent = xrpUsd.toFixed(4);
+  }catch(_){ xrpUsd = 0; $('xrpusd').textContent='–'; }
+}
 
 async function refreshQuote(){
   const raw = $('amt').value; const n = Number(raw);
@@ -193,6 +205,9 @@ async function refreshQuote(){
     $('ptout').textContent = fmt(ptOut, 2);
     const profit = ptOut - amt;
     $('profit').textContent = (profit>0n?'+':'') + fmt(profit, 2);
+    if(cfg.ftso){ if(!xrpUsd) await readXrp();
+      const pu = Number(formatUnits(profit, DEC)) * xrpUsd;
+      $('profitUsd').textContent = xrpUsd ? '(≈ $'+pu.toFixed(2)+')' : ''; }
   }catch(e){ $('apr').textContent='–'; setStatus('Quote failed: '+(e.shortMessage||e.message), 'err'); }
 }
 
@@ -344,7 +359,7 @@ setInterval(() => {
     else { $('matWhen').textContent = 'matured — redeemable now'; }
   }
 }, 1000);
-setInterval(() => { if(account){ refreshBalances(); pollRfq(); } }, 10000);
+setInterval(() => { if(account){ refreshBalances(); pollRfq(); } readXrp(); }, 10000);
 
 makePublic(); refreshQuote();
 </script>
