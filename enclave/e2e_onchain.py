@@ -19,9 +19,9 @@ RPC = os.environ.get("RPC", "https://coston2-api.flare.network/ext/C/rpc")
 EXPLORER = "https://coston2-explorer.flare.network"
 CHAIN = 114
 ENCLAVE_URL = os.environ.get("ENCLAVE_URL", "http://104.155.152.64:8080")
-RFQ = os.environ.get("RFQ", "0xE29D17D25bb2e0b92442A7B4DD9843d46c7dA187")
-FXRP = os.environ.get("FXRP", "0xA6fC08A750dC00e6f613e2aabaB5a54949D8B356")
-YT = os.environ.get("YT", "0x04A05b47fd57E5230a428111B9c3B45c16493752")
+RFQ = os.environ.get("RFQ", "0xE316db654d01295bE42bD25E23Af8Ce31D6284B1")
+FXRP = os.environ.get("FXRP", "0x03fDE303879d8B366ef384b9Be2F6276A27FCD62")
+YT = os.environ.get("YT", "0xA84437A6CAEeeAB1eB208e6E686a761A0B7cDa1d")
 PK = os.environ["PRIVATE_KEY"]
 SELLER = subprocess.run(["cast", "wallet", "address", "--private-key", PK], capture_output=True, text=True).stdout.strip()
 ONE = 1_000_000

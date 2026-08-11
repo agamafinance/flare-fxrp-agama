@@ -128,14 +128,14 @@ Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can tr
 
 | Contract | Address |
 | --- | --- |
-| Anchor | `0xC0E346206B5d6446f69522D29A88BC45B2B5c719` |
-| FXRP (demo) | `0xA6fC08A750dC00e6f613e2aabaB5a54949D8B356` |
-| Vault | `0xD0c8Ca68cc81fF4486d5D725fCE612ddFeb0672D` |
-| YieldSplitter | `0xBb4c3A08E108465b305205D92C089cd1a63976b6` |
-| PT | `0x4557491bCd8Da8BD2e32861b5C3CB70EDCB3D1aE` |
-| YT | `0x04A05b47fd57E5230a428111B9c3B45c16493752` |
-| PtAmm | `0x77D28482ace00b7760766a7699e6DcdDeAeed82E` |
-| ConfidentialYtRfq (signed quotes + reserve, gated by the live enclave key) | `0xE29D17D25bb2e0b92442A7B4DD9843d46c7dA187` |
+| Anchor | `0xE9F6e7089BbedFe2DCC132B7Cf6301062E9D2aFa` |
+| FXRP (demo) | `0x03fDE303879d8B366ef384b9Be2F6276A27FCD62` |
+| Vault | `0x7d5398e5A0660A422953A80DB6cb0af351E08938` |
+| YieldSplitter | `0xB19b27da53c8c6C9c4fF85050a77BCa7A2fdeC3E` |
+| PT | `0x31B1FA947C2b332DA7b348C9421d3C608E3f1E93` |
+| YT | `0xA84437A6CAEeeAB1eB208e6E686a761A0B7cDa1d` |
+| PtAmm | `0x541fe9998696EEb7Fb66C9058CA7Cc263670fa31` |
+| ConfidentialYtRfq (signed quotes + reserve, gated by the live enclave key) | `0xE316db654d01295bE42bD25E23Af8Ce31D6284B1` |
 | ConfidentialSpaceRegistry (real Google token verified on chain) | `0xdD11d93EC892df2C67bFf867C6891140a8D05c53` |
 | Live enclave (GCP Confidential Space, Intel TDX) | key `0x611218C983394c4C5022dc91bCf9dEB7cBe24f3A`, image `sha256:76ef61c3…3d3598` |
 | FtsoReader | `0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f` |
