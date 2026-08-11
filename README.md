@@ -115,9 +115,12 @@ verifies that signature and settles (`enclave/e2e_onchain.py`).
 enclave rejects any quote whose signature does not recover to the claimed MM, see `quoteDigest`), the
 enclave reads the RFQ terms (seller, ytAmount, reserve) from chain rather than the caller, checks the
 winning MM can actually pay, and the seller's reserve `minPrice` is enforced on-chain in `settle`. So
-a caller can neither forge a quote for someone else nor win below the reserve. `enclave/e2e_onchain.py`
-exercises all three cases live: a forged-for-another-MM quote rejected, a below-reserve quote rejected,
-and the best authentic quote signed by the enclave and settled on chain.
+a caller can neither forge a quote for someone else nor win below the reserve. Requests are also
+bounded (at most 32 quotes each, cheapest check first, and only the leading quotes are checked for
+solvency) and globally rate-limited, so a caller cannot amplify work through the endpoint.
+`enclave/e2e_onchain.py` exercises this live: a forged-for-another-MM quote rejected, a below-reserve
+quote rejected, an oversized (33-quote) request rejected, and the best authentic quote signed by the
+enclave and settled on chain.
 
 ## Live on Coston2 (chainId 114)
 
@@ -132,9 +135,9 @@ Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can tr
 | PT | `0x4557491bCd8Da8BD2e32861b5C3CB70EDCB3D1aE` |
 | YT | `0x04A05b47fd57E5230a428111B9c3B45c16493752` |
 | PtAmm | `0x77D28482ace00b7760766a7699e6DcdDeAeed82E` |
-| ConfidentialYtRfq (signed quotes + reserve, gated by the live enclave key) | `0xC48AABE4EF57FF8ea022F87D50CD65cEaFAD1580` |
-| ConfidentialSpaceRegistry (real Google token verified on chain) | `0xB2fa30a2F5eacc37B88Ac6673ca1a64EBAee8822` |
-| Live enclave (GCP Confidential Space, Intel TDX) | key `0xe33aca29e4DED4DFb6E95702a545E19609F500B9`, image `sha256:9c1fbf09…28905b` |
+| ConfidentialYtRfq (signed quotes + reserve, gated by the live enclave key) | `0xE29D17D25bb2e0b92442A7B4DD9843d46c7dA187` |
+| ConfidentialSpaceRegistry (real Google token verified on chain) | `0xdD11d93EC892df2C67bFf867C6891140a8D05c53` |
+| Live enclave (GCP Confidential Space, Intel TDX) | key `0x611218C983394c4C5022dc91bCf9dEB7cBe24f3A`, image `sha256:76ef61c3…3d3598` |
 | FtsoReader | `0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f` |
 | FTestXRP (real FAsset, minted from native XRP) | `0x0b6A3645c240605887a5532109323A3E12273dc7` |
 
@@ -177,8 +180,8 @@ see [`DEPLOY.md`](./DEPLOY.md).
   end to end. Quotes are authenticated (each is signed by its MM), the RFQ terms and the winner's
   solvency are read from chain, and the seller's reserve is enforced on-chain, so the `/settle`
   endpoint is safe to expose. The VM is a single instance (no HA/redundancy) and uses the debug CS
-  image so the attestation is also visible in the serial log. A production deployment would add MM
-  authorization/allowlisting and rate limiting on top.
+  image so the attestation is also visible in the serial log. The endpoint bounds work per request
+  and rate-limits globally; a production deployment would add per-MM authorization/allowlisting.
 - **The live Coston2 demo uses a mock yield vault.** There is no real single-asset FXRP yield vault
   on Coston2 (the real ones, e.g. bizFXRP, are on Flare mainnet, which `test/ForkVault.t.sol`
   binds to for deposit). The fixed rate is manufactured by the AMM discount over that mock; the

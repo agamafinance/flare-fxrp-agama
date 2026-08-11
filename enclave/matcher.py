@@ -20,12 +20,26 @@ The endpoint is safe to expose: a caller cannot forge a quote for an MM (signatu
 alter the RFQ terms (read from chain, not the request), and cannot win below the seller's reserve
 (enforced here and again on-chain in settle).
 """
-import os, json, http.client, socket
+import os, json, http.client, socket, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from eth_account import Account
 from eth_abi import encode as abi_encode
 from eth_utils import keccak
 import requests
+
+MAX_QUOTES = 32          # bound the work per request (signature recoveries + solvency reads)
+RATE_MAX, RATE_WINDOW = 30, 10.0   # at most 30 /settle requests per 10s, globally
+_rl_lock, _rl_times = threading.Lock(), []
+
+def rate_ok():
+    now = time.monotonic()
+    with _rl_lock:
+        while _rl_times and now - _rl_times[0] > RATE_WINDOW:
+            _rl_times.pop(0)
+        if len(_rl_times) >= RATE_MAX:
+            return False
+        _rl_times.append(now)
+        return True
 
 RPC = os.environ.get("COSTON2_RPC", "https://coston2-api.flare.network/ext/C/rpc")
 REGISTRY = "0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019"
@@ -94,14 +108,16 @@ def quote_is_authentic(chain_id, rfq, rfq_id, yt_amount, q):
         return False
     return rec.lower() == q["mm"].lower()
 
-def best_execution(quotes, yt_amount, min_price):
+def choose_winner(quotes, yt_amount, min_price, fxrp, rfq):
     valid = [q for q in quotes if min_price <= int(q["price"]) < yt_amount]  # reserve floor + sanity ceiling
-    assert valid, "no eligible quote (must be authentic, solvent, and at or above the reserve)"
+    assert valid, "no eligible quote (must be authentic and at or above the reserve)"
     _ = xrp_usd_1e18()  # oracle-aware: quotes are FXRP premiums the enclave can price against XRP/USD
-    best = max(int(q["price"]) for q in valid)
-    tied = [q for q in valid if int(q["price"]) == best]
-    win = tied[0] if len(tied) == 1 else tied[secure_random() % len(tied)]
-    return win["mm"], best, int(win["deadline"])
+    rnd = secure_random()  # fair tie-break among equal top prices (Flare Secure RNG)
+    order = sorted(valid, key=lambda q: (-int(q["price"]), (rnd ^ int(q["mm"], 16))))
+    for q in order:  # best price first; first solvent quote wins, so solvency reads are bounded
+        if mm_can_pay(fxrp, rfq, q["mm"], int(q["price"])):
+            return q["mm"], int(q["price"]), int(q["deadline"])
+    raise AssertionError("no solvent quote at or above the reserve")
 
 def sign_settlement(chain_id, rfq, rfq_id, seller, winner, yt_amount, price, deadline):
     digest = keccak(abi_encode(
@@ -123,16 +139,18 @@ class H(BaseHTTPRequestHandler):
         else: self._s(404, {"error": "not found"})
     def do_POST(self):
         if self.path != "/settle": return self._s(404, {"error": "not found"})
+        if not rate_ok(): return self._s(429, {"error": "rate limited"})
         d = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
         try:
+            quotes = d["quotes"]
+            assert len(quotes) <= MAX_QUOTES, "too many quotes"               # bound the work per request
             rfq, chain_id, rfq_id = d["rfq"], int(d["chainId"]), int(d["rfqId"])
-            assert rfq_trusts_enclave(rfq), "rfq does not trust this enclave"
+            assert rfq_trusts_enclave(rfq), "rfq does not trust this enclave"  # cheapest gate first: one read
             seller, yt_amount, min_price, is_open = read_rfq(rfq, rfq_id)      # authoritative terms
             assert is_open, "rfq not open"
             fxrp = read_fxrp(rfq)
-            auth = [q for q in d["quotes"] if quote_is_authentic(chain_id, rfq, rfq_id, yt_amount, q)]
-            payable = [q for q in auth if mm_can_pay(fxrp, rfq, q["mm"], int(q["price"]))]  # winner can settle
-            winner, price, deadline = best_execution(payable, yt_amount, min_price)
+            auth = [q for q in quotes if quote_is_authentic(chain_id, rfq, rfq_id, yt_amount, q)]
+            winner, price, deadline = choose_winner(auth, yt_amount, min_price, fxrp, rfq)
             v, r, s = sign_settlement(chain_id, rfq, rfq_id, seller, winner, yt_amount, price, deadline)
             self._s(200, {"seller": seller, "winner": winner, "ytAmount": yt_amount,
                           "price": price, "deadline": deadline, "v": v, "r": r, "s": s})

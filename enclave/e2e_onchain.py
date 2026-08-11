@@ -17,8 +17,8 @@ from eth_utils import keccak
 
 RPC = os.environ.get("RPC", "https://coston2-api.flare.network/ext/C/rpc")
 CHAIN = 114
-ENCLAVE_URL = os.environ.get("ENCLAVE_URL", "http://34.10.20.214:8080")
-RFQ = os.environ.get("RFQ", "0xaa612426701D079564deC775Bb869c982dA07B18")
+ENCLAVE_URL = os.environ.get("ENCLAVE_URL", "http://104.155.152.64:8080")
+RFQ = os.environ.get("RFQ", "0xE29D17D25bb2e0b92442A7B4DD9843d46c7dA187")
 FXRP = os.environ.get("FXRP", "0xA6fC08A750dC00e6f613e2aabaB5a54949D8B356")
 YT = os.environ.get("YT", "0x04A05b47fd57E5230a428111B9c3B45c16493752")
 PK = os.environ["PRIVATE_KEY"]
@@ -85,6 +85,12 @@ low = signed_quote(mm2, mm2.address, 1 * ONE, deadline, rfq_id)
 rB = post_settle(rfq_id, [low])
 print("B. authentic below reserve ->", rB.status_code, rB.json())
 assert rB.status_code == 400, "below-reserve quote should be rejected"
+
+# D. quote flooding: >32 quotes is rejected outright (bounds the enclave's work per request)
+flood = [signed_quote(mm1, mm1.address, (3 + i) * ONE, deadline, rfq_id) for i in range(33)]
+rD = post_settle(rfq_id, flood)
+print("D. quote flooding (33)     ->", rD.status_code, rD.json())
+assert rD.status_code == 400 and "too many" in rD.json().get("error", "")
 
 # C. two authentic quotes at/above reserve: mm1=4, mm2=6 -> enclave picks mm2, signs, we settle
 q1 = signed_quote(mm1, mm1.address, 4 * ONE, deadline, rfq_id)
