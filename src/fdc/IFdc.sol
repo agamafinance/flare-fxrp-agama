@@ -18,6 +18,7 @@ library Payment {
         uint64 blockNumber;
         uint64 blockTimestamp;
         bytes32 sourceAddressHash;
+        bytes32 sourceAddressesRoot;
         bytes32 receivingAddressHash;
         bytes32 intendedReceivingAddressHash;
         int256 spentAmount;
