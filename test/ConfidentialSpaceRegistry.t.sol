@@ -62,4 +62,32 @@ contract ConfidentialSpaceRegistryTest is Test {
         vm.expectRevert(bytes("unexpected enclave image"));
         other.registerEnclave(header, payload, sig, enclave);
     }
+
+    function _load(string memory path)
+        internal
+        returns (ConfidentialSpaceRegistry r, bytes memory h, bytes memory p, bytes memory sg, address enc)
+    {
+        string memory j = vm.readFile(path);
+        h = bytes(vm.parseJsonString(j, ".headerB64"));
+        p = bytes(vm.parseJsonString(j, ".payloadB64"));
+        sg = vm.parseJsonBytes(j, ".sig");
+        enc = vm.parseJsonAddress(j, ".enclave");
+        r = new ConfidentialSpaceRegistry(vm.parseJsonBytes(j, ".n"), e, bytes(vm.parseJsonString(j, ".imageDigest")));
+    }
+
+    /// A debug Confidential Space enclave (operator can read/forge) must not be trusted.
+    function test_RejectsDebugEnclave() public {
+        (ConfidentialSpaceRegistry r, bytes memory h, bytes memory p, bytes memory sg, address enc) =
+            _load("test/vectors/cs_attestation_debug.json");
+        vm.expectRevert(bytes("debug enclave not allowed"));
+        r.registerEnclave(h, p, sg, enc);
+    }
+
+    /// A non-Intel-TDX platform (e.g. AMD SEV) must not be trusted when we require TDX.
+    function test_RejectsNonTdxEnclave() public {
+        (ConfidentialSpaceRegistry r, bytes memory h, bytes memory p, bytes memory sg, address enc) =
+            _load("test/vectors/cs_attestation_nontdx.json");
+        vm.expectRevert(bytes("not Intel TDX"));
+        r.registerEnclave(h, p, sg, enc);
+    }
 }

@@ -65,6 +65,11 @@ contract ConfidentialSpaceRegistry is IEnclaveRegistry {
     bytes public expectedImageDigest; // approved container image digest, e.g. "sha256:..."
     address public enclaveSigner; // registered enclave key
     bytes constant ISSUER = '"iss":"https://confidentialcomputing.googleapis.com"';
+    // A settlement is only trustworthy if it was signed inside a real, non-debuggable Intel TDX
+    // Confidential Space enclave. These claims come straight from Google's attestation token.
+    bytes constant HWMODEL = '"hwmodel":"GCP_INTEL_TDX"';
+    bytes constant SWNAME = '"swname":"CONFIDENTIAL_SPACE"';
+    bytes constant NODEBUG = '"dbgstat":"disabled-since-boot"'; // production CS value; debug is "enabled"
 
     event EnclaveRegistered(address indexed enclaveSigner, bytes imageDigest);
 
@@ -87,6 +92,10 @@ contract ConfidentialSpaceRegistry is IEnclaveRegistry {
         bytes memory payload = Base64URL.decode(payloadB64);
         require(_contains(payload, ISSUER), "issuer not Confidential Space");
         require(_contains(payload, bytes.concat('"image_digest":"', expectedImageDigest, '"')), "unexpected enclave image");
+        // real, non-debuggable Intel TDX Confidential Space, otherwise the operator could read/forge
+        require(_contains(payload, HWMODEL), "not Intel TDX");
+        require(_contains(payload, SWNAME), "not Confidential Space");
+        require(_contains(payload, NODEBUG), "debug enclave not allowed");
         // the enclave key must be present as the token's eat_nonce (robust to string or array form)
         require(_contains(payload, bytes('"eat_nonce"')), "no eat_nonce");
         require(_contains(payload, _toHex(claimedKey)), "enclave key not attested");

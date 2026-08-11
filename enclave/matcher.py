@@ -108,16 +108,26 @@ def quote_is_authentic(chain_id, rfq, rfq_id, yt_amount, q):
         return False
     return rec.lower() == q["mm"].lower()
 
+MIN_PREMIUM_USD_1E6 = 100_000            # $0.10 floor: reject economic dust
+MAX_PREMIUM_USD_1E6 = 100_000_000_000    # $100k ceiling: reject absurd premiums
+
+def premium_usd_1e6(price, xrp_usd):
+    # price is FXRP (6dp, ~1:1 with XRP); xrp_usd is USD/XRP scaled 1e18 -> USD value in 6dp
+    return price * xrp_usd // 10**18
+
 def choose_winner(quotes, yt_amount, min_price, fxrp, rfq):
-    valid = [q for q in quotes if min_price <= int(q["price"]) < yt_amount]  # reserve floor + sanity ceiling
-    assert valid, "no eligible quote (must be authentic and at or above the reserve)"
-    _ = xrp_usd_1e18()  # oracle-aware: quotes are FXRP premiums the enclave can price against XRP/USD
+    xrp_usd = xrp_usd_1e18()  # FTSO XRP/USD: the premium is bounded in real USD terms, not just tokens
+    def eligible(p):
+        u = premium_usd_1e6(p, xrp_usd)
+        return min_price <= p < yt_amount and MIN_PREMIUM_USD_1E6 <= u <= MAX_PREMIUM_USD_1E6
+    valid = [q for q in quotes if eligible(int(q["price"]))]
+    assert valid, "no eligible quote (authentic, at/above reserve, within the FTSO USD band)"
     rnd = secure_random()  # fair tie-break among equal top prices (Flare Secure RNG)
     order = sorted(valid, key=lambda q: (-int(q["price"]), (rnd ^ int(q["mm"], 16))))
     for q in order:  # best price first; first solvent quote wins, so solvency reads are bounded
         if mm_can_pay(fxrp, rfq, q["mm"], int(q["price"])):
-            return q["mm"], int(q["price"]), int(q["deadline"])
-    raise AssertionError("no solvent quote at or above the reserve")
+            return q["mm"], int(q["price"]), int(q["deadline"]), premium_usd_1e6(int(q["price"]), xrp_usd)
+    raise AssertionError("no solvent quote within band at or above the reserve")
 
 def sign_settlement(chain_id, rfq, rfq_id, seller, winner, yt_amount, price, deadline):
     digest = keccak(abi_encode(
@@ -150,10 +160,11 @@ class H(BaseHTTPRequestHandler):
             assert is_open, "rfq not open"
             fxrp = read_fxrp(rfq)
             auth = [q for q in quotes if quote_is_authentic(chain_id, rfq, rfq_id, yt_amount, q)]
-            winner, price, deadline = choose_winner(auth, yt_amount, min_price, fxrp, rfq)
+            winner, price, deadline, premiumUsd = choose_winner(auth, yt_amount, min_price, fxrp, rfq)
             v, r, s = sign_settlement(chain_id, rfq, rfq_id, seller, winner, yt_amount, price, deadline)
             self._s(200, {"seller": seller, "winner": winner, "ytAmount": yt_amount,
-                          "price": price, "deadline": deadline, "v": v, "r": r, "s": s})
+                          "price": price, "premiumUsd6dp": premiumUsd, "deadline": deadline,
+                          "v": v, "r": r, "s": s})
         except Exception as e:
             self._s(400, {"error": str(e)})
 

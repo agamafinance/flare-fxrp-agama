@@ -35,7 +35,7 @@ contract FdcRealProofTest is Test {
             return;
         }
 
-        XrpOnRamp ramp = new XrpOnRamp(r.responseBody.receivingAddressHash, bytes32("testXRP"));
+        XrpOnRamp ramp = new XrpOnRamp(r.responseBody.receivingAddressHash, bytes32("testXRP"), address(0));
 
         assertTrue(ramp.verify(response, proof, r.votingRound), "real FDC attestation verifies vs live Relay root");
 

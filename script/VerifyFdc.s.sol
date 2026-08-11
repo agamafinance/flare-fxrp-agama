@@ -17,7 +17,7 @@ contract VerifyFdc is Script {
         bytes32[] memory merkleProof = vm.envBytes32("PROOF", ",");
         Payment.Response memory resp = abi.decode(attestedResponse, (Payment.Response));
 
-        XrpOnRamp ramp = new XrpOnRamp(resp.responseBody.receivingAddressHash, bytes32("testXRP"));
+        XrpOnRamp ramp = new XrpOnRamp(resp.responseBody.receivingAddressHash, bytes32("testXRP"), address(0));
 
         console2.log("XRPL tx:");
         console2.logBytes32(resp.requestBody.transactionId);
