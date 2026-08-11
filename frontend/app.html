@@ -100,6 +100,21 @@
     </div>
   </div>
 
+  <div class="card" id="rfqcard" style="display:none">
+    <h1 style="font-size:20px">Sell your yield · confidential RFQ</h1>
+    <p class="sub">Sell your YT to the best market-maker quote. MMs quote privately to a Flare Confidential Compute enclave (TEE); only the winning settlement is revealed on chain. Losing quotes never touch the chain.</p>
+    <div class="pos"><span class="muted">Your YT</span><span class="v"><span id="balY">-</span> YT</span></div>
+    <button id="split" class="btn-ghost" style="margin-top:12px">No YT? Split 100 FXRP → 100 PT + 100 YT</button>
+    <label style="margin-top:16px">YT to sell</label>
+    <div class="inrow">
+      <input id="ytAmt" type="number" min="0" step="10" value="100" placeholder="0">
+      <div class="unit">YT</div>
+    </div>
+    <button id="openRfq" class="btn-primary">Open confidential RFQ</button>
+    <button id="cancelRfq" class="btn-ghost hide">Cancel RFQ (reclaim YT)</button>
+    <div id="rfqStatus" class="status"></div>
+  </div>
+
   <div style="text-align:center"><span class="pill" id="chainpill">not connected</span></div>
 </div>
 
@@ -122,6 +137,9 @@ const CONFIG = {
     anchor:'0xC0E346206B5d6446f69522D29A88BC45B2B5c719',
     fxrp:'0xA6fC08A750dC00e6f613e2aabaB5a54949D8B356',
     pt:'0x4557491bCd8Da8BD2e32861b5C3CB70EDCB3D1aE',
+    yt:'0x04A05b47fd57E5230a428111B9c3B45c16493752',
+    rfq:'0xFc2440629530a11915E65E3261779E37f70e3790',
+    splitter:'0xBb4c3A08E108465b305205D92C089cd1a63976b6',
   },
   coston2demo: { // short maturity (~10 min) so the full lock -> redeem cycle is demoable live
     chainId: 114, name:'Coston2', rpc:'https://coston2-api.flare.network/ext/C/rpc',
@@ -145,10 +163,19 @@ const ERC20_ABI = [
   {type:'function',name:'allowance',stateMutability:'view',inputs:[{type:'address'},{type:'address'}],outputs:[{type:'uint256'}]},
   {type:'function',name:'decimals',stateMutability:'view',inputs:[],outputs:[{type:'uint8'}]},
 ];
+const SPLITTER_ABI = [
+  {type:'function',name:'split',stateMutability:'nonpayable',inputs:[{type:'uint256'}],outputs:[]},
+];
+const RFQ_ABI = [
+  {type:'function',name:'openRfq',stateMutability:'nonpayable',inputs:[{type:'uint256'}],outputs:[{type:'uint256'}]},
+  {type:'function',name:'cancel',stateMutability:'nonpayable',inputs:[{type:'uint256'}],outputs:[]},
+  {type:'function',name:'nextId',stateMutability:'view',inputs:[],outputs:[{type:'uint256'}]},
+  {type:'function',name:'rfqs',stateMutability:'view',inputs:[{type:'uint256'}],outputs:[{type:'address'},{type:'uint256'},{type:'bool'}]},
+];
 const MAX = (2n**256n)-1n;
 const DEC = 6; // FXRP / PT decimals
 
-let net = 'coston2', cfg = CONFIG.coston2, pub, wallet, account, maturity = 0n;
+let net = 'coston2', cfg = CONFIG.coston2, pub, wallet, account, maturity = 0n, myRfqId = 0n;
 const $ = id => document.getElementById(id);
 const fmt = (v,dp=2) => Number(formatUnits(v, DEC)).toLocaleString('en-US',{maximumFractionDigits:dp});
 function setStatus(msg, kind=''){ const s=$('status'); s.textContent=msg; s.className='status '+kind; }
@@ -183,6 +210,28 @@ async function refreshBalances(){
   }catch(e){ /* ignore */ }
 }
 
+/* ---- confidential YT RFQ ---- */
+function setRfqStatus(msg, kind=''){ const s=$('rfqStatus'); s.textContent=msg; s.className='status '+kind; }
+function showRfqPanel(){ $('rfqcard').style.display = (cfg.rfq && account) ? '' : 'none'; }
+async function refreshYt(){
+  if(!account || !cfg.yt) return;
+  try{ const by = await pub.readContract({address:cfg.yt, abi:ERC20_ABI, functionName:'balanceOf', args:[account]});
+    $('balY').textContent = fmt(by); }catch(_){}
+}
+async function pollRfq(){
+  if(!cfg.rfq || !myRfqId) return;
+  try{
+    const [, amt, open] = await pub.readContract({address:cfg.rfq, abi:RFQ_ABI, functionName:'rfqs', args:[myRfqId]});
+    if(open){
+      setRfqStatus('RFQ #'+myRfqId+' open · '+fmt(amt)+' YT escrowed. Market makers are quoting privately to the enclave.');
+      $('cancelRfq').classList.remove('hide');
+    } else {
+      setRfqStatus('RFQ #'+myRfqId+' settled by the enclave · your YT went to the best private quote.','ok');
+      $('cancelRfq').classList.add('hide'); myRfqId = 0n; refreshYt();
+    }
+  }catch(_){}
+}
+
 async function connect(){
   if(!window.ethereum){ setStatus('No wallet found. Install MetaMask (or use a burner on localhost).','err'); return; }
   try{
@@ -202,6 +251,7 @@ async function connect(){
       const d=new Date(Number(maturity)*1000); $('matWhen').textContent = d.toLocaleDateString(); }catch(_){}
     setStatus('');
     refreshBalances();
+    showRfqPanel(); refreshYt(); pollRfq();
   }catch(e){ setStatus('Connect failed: '+(e.shortMessage||e.message),'err'); }
 }
 
@@ -242,10 +292,47 @@ $('redeem').onclick = async () => {
   }, 'Redeeming PT 1:1…', 'Redeemed ✓ — principal back in FXRP');
 };
 
-$('net').onchange = (e) => { net=e.target.value; cfg=CONFIG[net]; makePublic(); account=null;
+$('split').onclick = async () => {
+  try{
+    setRfqStatus('Splitting 100 FXRP into PT + YT…');
+    const amt = parseUnits('100', DEC);
+    await ensureAllowance(cfg.fxrp, cfg.splitter, amt);
+    const hash = await wallet.writeContract({account, address:cfg.splitter, abi:SPLITTER_ABI, functionName:'split', args:[amt]});
+    await pub.waitForTransactionReceipt({ hash });
+    setRfqStatus('Split done · you now hold 100 PT + 100 YT.','ok'); refreshYt(); refreshBalances();
+  }catch(e){ setRfqStatus((e.shortMessage||e.message),'err'); }
+};
+
+$('openRfq').onclick = async () => {
+  const amt = parseUnits($('ytAmt').value||'0', DEC);
+  if(!(amt>0n)){ setRfqStatus('Enter a YT amount','err'); return; }
+  try{
+    setRfqStatus('Escrowing YT and opening the confidential RFQ…');
+    await ensureAllowance(cfg.yt, cfg.rfq, amt);
+    const hash = await wallet.writeContract({account, address:cfg.rfq, abi:RFQ_ABI, functionName:'openRfq', args:[amt]});
+    await pub.waitForTransactionReceipt({ hash });
+    const nid = await pub.readContract({address:cfg.rfq, abi:RFQ_ABI, functionName:'nextId'});
+    myRfqId = nid - 1n;
+    setRfqStatus('RFQ #'+myRfqId+' open · market makers are quoting privately to the enclave.','ok');
+    $('cancelRfq').classList.remove('hide'); refreshYt();
+  }catch(e){ setRfqStatus((e.shortMessage||e.message),'err'); }
+};
+
+$('cancelRfq').onclick = async () => {
+  if(!myRfqId) return;
+  try{
+    setRfqStatus('Cancelling RFQ, reclaiming your YT…');
+    const hash = await wallet.writeContract({account, address:cfg.rfq, abi:RFQ_ABI, functionName:'cancel', args:[myRfqId]});
+    await pub.waitForTransactionReceipt({ hash });
+    setRfqStatus('RFQ cancelled · YT reclaimed.','ok');
+    $('cancelRfq').classList.add('hide'); myRfqId = 0n; refreshYt();
+  }catch(e){ setRfqStatus((e.shortMessage||e.message),'err'); }
+};
+
+$('net').onchange = (e) => { net=e.target.value; cfg=CONFIG[net]; makePublic(); account=null; myRfqId=0n;
   $('connect').textContent='Connect'; $('chainpill').textContent='not connected'; $('lock').disabled=true;
   $('lock').textContent='Connect wallet to lock'; $('mint').classList.add('hide');
-  $('balF').textContent='–'; $('balP').textContent='–'; refreshQuote(); };
+  $('balF').textContent='–'; $('balP').textContent='–'; $('rfqcard').style.display='none'; refreshQuote(); };
 $('connect').onclick = connect;
 $('amt').addEventListener('input', refreshQuote);
 
@@ -257,7 +344,7 @@ setInterval(() => {
     else { $('matWhen').textContent = 'matured — redeemable now'; }
   }
 }, 1000);
-setInterval(() => { if(account) refreshBalances(); }, 10000);
+setInterval(() => { if(account){ refreshBalances(); pollRfq(); } }, 10000);
 
 makePublic(); refreshQuote();
 </script>
