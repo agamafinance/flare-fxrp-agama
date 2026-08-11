@@ -11,7 +11,7 @@ export PATH="$HOME/.foundry/bin:$PATH"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$DIR/.env.enclave"   # ENCLAVE_PK
 RPC=${RPC:-https://coston2-api.flare.network/ext/C/rpc}
-RFQ=${RFQ:-0xFc2440629530a11915E65E3261779E37f70e3790}
+RFQ=${RFQ:-0x460BC8ef9A5c7aa9D77212261C527dd20Fb3b4Aa}
 FXRP=${FXRP:-0xA6fC08A750dC00e6f613e2aabaB5a54949D8B356}
 
 RFQ_ID=$1; SELLER=$2; YT_AMOUNT=$3; PRICE=${4:-2000000}
