@@ -22,6 +22,7 @@ contract YieldSplitterTest is Test {
 
     function setUp() public {
         fxrp = new MockERC20("Flare XRP", "FXRP", 18);
+        vm.prank(yielder); // yielder owns the vault, so it can simulate yield via addYield
         vault = new MockVault(fxrp);
         splitter = new YieldSplitter(vault, block.timestamp + 90 days);
         ptTok = splitter.pt();

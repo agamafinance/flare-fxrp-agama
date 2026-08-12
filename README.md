@@ -219,6 +219,13 @@ fixable high/medium. What remains needs a redesign, not a patch, and is out of s
 - **RNG tie-break grinding.** Equal-price ties are broken with the round's public RNG, which an MM can
   grind addresses against. The economic impact is nil (ties are at equal price, so the seller is
   indifferent); eliminating it needs a commit-reveal on quotes.
+- **Winning-MM free option / last-look.** The winner pays only at `settle`, via an allowance it
+  controls, so within the settle window it can walk away if the market moves against it (adverse
+  selection for the seller). Removing it needs the MM to escrow the premium at quote time (an atomic,
+  capital-committed settlement), i.e. a taker bond, not a signature-only quote.
+- **Best-execution is over submitted quotes only.** The enclave matches the quotes a caller POSTs, so
+  a relayer can suppress rivals and settle at the reserve. The on-chain reserve bounds the seller's
+  downside; true best-execution needs verifiable, end-to-end signed quote aggregation.
 
 ## Disclaimer
 

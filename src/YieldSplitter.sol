@@ -92,9 +92,9 @@ contract YieldSplitter is ISplitterHook {
     /// Deposit FXRP -> get equal PT + YT (principal = amount deposited).
     function split(uint256 fxrpAmount) external {
         _accrue(msg.sender);
-        fxrp.transferFrom(msg.sender, address(this), fxrpAmount);
+        require(fxrp.transferFrom(msg.sender, address(this), fxrpAmount), "fxrp in");
         fxrp.approve(address(vault), fxrpAmount);
-        vault.deposit(fxrpAmount, address(this));
+        require(vault.deposit(fxrpAmount, address(this)) > 0, "no shares"); // reject a 0-share inflation deposit
         pt.mint(msg.sender, fxrpAmount);
         yt.mint(msg.sender, fxrpAmount);
         totalPrincipal += fxrpAmount;
@@ -124,22 +124,28 @@ contract YieldSplitter is ISplitterHook {
     function redeemPrincipal(uint256 ptAmount) external returns (uint256 got) {
         require(block.timestamp >= maturity, "not matured");
         _updateGlobal();
+        // pro-rata haircut: if the vault is impaired below principal, losses are socialized pari passu
+        // instead of first-come-first-served. PT is capped at par (any surplus above principal is YT's).
+        uint256 held = vault.convertToAssets(vault.balanceOf(address(this)));
+        uint256 backing = held < totalPrincipal ? held : totalPrincipal;
+        uint256 assetsOut = totalPrincipal == 0 ? 0 : (ptAmount * backing) / totalPrincipal;
         pt.burn(msg.sender, ptAmount);
         totalPrincipal -= ptAmount;
-        uint256 shares = vault.convertToShares(ptAmount);
-        got = vault.redeem(shares, msg.sender, address(this));
+        got = vault.redeem(vault.convertToShares(assetsOut), msg.sender, address(this));
         emit PrincipalRedeemed(msg.sender, got);
     }
 
     /// Before maturity: recombine equal PT+YT back into FXRP (exit early).
     function recombine(uint256 amount) external returns (uint256 got) {
         _accrue(msg.sender);
+        uint256 held = vault.convertToAssets(vault.balanceOf(address(this)));
+        uint256 backing = held < totalPrincipal ? held : totalPrincipal; // same pro-rata haircut as redeem
+        uint256 assetsOut = totalPrincipal == 0 ? 0 : (amount * backing) / totalPrincipal;
         pt.burn(msg.sender, amount);
         yt.burn(msg.sender, amount);
         totalPrincipal -= amount;
         _setDebt(msg.sender);
-        uint256 shares = vault.convertToShares(amount);
-        got = vault.redeem(shares, msg.sender, address(this));
+        got = vault.redeem(vault.convertToShares(assetsOut), msg.sender, address(this));
     }
 
     /* -------------------------------- views ---------------------------------- */

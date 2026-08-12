@@ -69,8 +69,15 @@ contract ConfidentialSpaceRegistry is IEnclaveRegistry {
     bytes constant HWMODEL = "GCP_INTEL_TDX";
     bytes constant SWNAME = "CONFIDENTIAL_SPACE";
     bytes constant NODEBUG = "disabled-since-boot"; // production; a debug enclave reports "enabled"
+    bytes constant AUD = "agama-anchor"; // the audience the enclave requests its token for
 
     event EnclaveRegistered(address indexed enclaveSigner, bytes imageDigest);
+
+    /// The owner can rotate the attester key so a Google JWKS rotation does not brick re-registration.
+    function setAttesterModulus(bytes calldata _modulus) external {
+        require(msg.sender == owner, "only owner");
+        attesterModulus = _modulus;
+    }
 
     constructor(bytes memory _modulus, bytes memory _exponent, bytes memory _expectedImageDigest) {
         attesterModulus = _modulus;
@@ -103,6 +110,7 @@ contract ConfidentialSpaceRegistry is IEnclaveRegistry {
         require(_topEq(p, n, "swname", SWNAME), "not Confidential Space");
         require(_topEq(p, n, "dbgstat", NODEBUG), "debug enclave not allowed");
         require(_topEq(p, n, "eat_nonce", _toHex(claimedKey)), "enclave key not the eat_nonce");
+        require(_topEq(p, n, "aud", AUD), "wrong audience");
 
         // 4. freshness: reject an expired token
         (uint256 xs, uint256 xe) = JsonLite.get(p, 0, n, "exp");

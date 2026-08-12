@@ -134,12 +134,12 @@ def quote_digest(chain_id, rfq, rfq_id, mm, yt_amount, price, deadline):
         ["AnchorQuote", chain_id, rfq, rfq_id, mm, yt_amount, price, deadline]))
 
 def quote_is_authentic(chain_id, rfq, rfq_id, yt_amount, q):
-    d = quote_digest(chain_id, rfq, rfq_id, q["mm"], yt_amount, int(q["price"]), int(q["deadline"]))
-    try:
+    try:  # a malformed quote is skipped, never fatal to the whole batch
+        d = quote_digest(chain_id, rfq, rfq_id, q["mm"], yt_amount, int(q["price"]), int(q["deadline"]))
         rec = Account._recover_hash(d, signature=bytes.fromhex(q["sig"][2:]))
+        return rec.lower() == q["mm"].lower()
     except Exception:
         return False
-    return rec.lower() == q["mm"].lower()
 
 # A per-settlement USD risk band. MAX is the binding, oracle-derived ceiling: with XRP ~$0.5 a $10 cap
 # is ~20 FXRP, tighter than a typical notional, so the FTSO price actually changes accept/reject.
@@ -176,6 +176,7 @@ def sign_settlement(chain_id, rfq, rfq_id, seller, winner, yt_amount, price, dea
 TOKEN = None
 
 class H(BaseHTTPRequestHandler):
+    timeout = 15  # per-connection socket timeout: a slow-loris client cannot hold a worker open
     def _s(self, code, body):
         b = json.dumps(body).encode(); self.send_response(code)
         self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b)
@@ -199,7 +200,9 @@ class H(BaseHTTPRequestHandler):
             seller, yt_amount, min_price, is_open = read_rfq(rfq, rfq_id)      # authoritative terms
             assert is_open, "rfq not open"
             fxrp = read_fxrp(rfq)
-            auth = [q for q in quotes if quote_is_authentic(chain_id, rfq, rfq_id, yt_amount, q)]
+            now = latest_block_ts()  # only quotes whose deadline outlasts settlement: an expired quote
+            auth = [q for q in quotes if quote_is_authentic(chain_id, rfq, rfq_id, yt_amount, q)  # would win then
+                    and int(q["deadline"]) > now + 60]                                            # revert on-chain
             winner, price, deadline, premiumUsd = choose_winner(auth, yt_amount, min_price, fxrp, rfq)
             v, r, s = sign_settlement(chain_id, rfq, rfq_id, seller, winner, yt_amount, price, deadline)
             self._s(200, {"seller": seller, "winner": winner, "ytAmount": yt_amount,

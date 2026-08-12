@@ -13,6 +13,7 @@ import "./interfaces/IERC4626.sol";
  */
 contract MockVault is IERC4626 {
     IERC20 public immutable underlying; // FXRP
+    address public immutable owner; // only the owner may simulate yield (addYield)
     uint256 public totalShares;
     uint256 public totalAssetsHeld; // FXRP under management
     mapping(address => uint256) public balanceOf; // share ledger
@@ -20,6 +21,7 @@ contract MockVault is IERC4626 {
 
     constructor(IERC20 _asset) {
         underlying = _asset;
+        owner = msg.sender;
     }
 
     /* ------------------------------- ERC-4626 -------------------------------- */
@@ -33,8 +35,9 @@ contract MockVault is IERC4626 {
     }
 
     function deposit(uint256 assets, address receiver) external returns (uint256 shares) {
-        underlying.transferFrom(msg.sender, address(this), assets);
+        require(underlying.transferFrom(msg.sender, address(this), assets), "in");
         shares = convertToShares(assets); // virtual-share offset: no first-deposit inflation attack
+        require(shares > 0, "zero shares");
         totalShares += shares;
         totalAssetsHeld += assets;
         balanceOf[receiver] += shares;
@@ -49,7 +52,7 @@ contract MockVault is IERC4626 {
         balanceOf[owner] -= shares;
         totalShares -= shares;
         totalAssetsHeld -= assets;
-        underlying.transfer(receiver, assets);
+        require(underlying.transfer(receiver, assets), "out");
     }
 
     // +1 virtual share and asset (ERC-4626 inflation-attack mitigation): a first depositor cannot be
@@ -93,9 +96,11 @@ contract MockVault is IERC4626 {
 
     /* ------------------------------ test helper ------------------------------ */
 
-    /// Simulate yield: FXRP flows in, no new shares -> price-per-share rises.
+    /// Simulate yield: FXRP flows in, no new shares -> price-per-share rises. Owner-only, so it cannot
+    /// be used as an unbounded donation to overpower the virtual-share offset (inflation attack).
     function addYield(uint256 amount) external {
-        underlying.transferFrom(msg.sender, address(this), amount);
+        require(msg.sender == owner, "only owner");
+        require(underlying.transferFrom(msg.sender, address(this), amount), "in");
         totalAssetsHeld += amount;
     }
 }
