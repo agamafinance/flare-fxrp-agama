@@ -35,7 +35,7 @@ contract XrpOnRamp {
     uint256 public constant FDC_PROTOCOL_ID = 200;
     bytes32 public constant ATT_PAYMENT = bytes32("Payment"); // FDC "Payment" attestation type
     uint8 public constant STATUS_SUCCESS = 0; // Payment status 0 = success
-    uint256 public constant SLIP_TOL_BPS = 100; // PT out floor = 99% of the AMM fair quote (anti-slippage)
+    uint256 public constant PAR_FLOOR_BPS = 9900; // PT out floor = 99% of 1:1 par (non-manipulable)
 
     IRelay public immutable relay;
     bytes32 public immutable treasuryAddressHash; // FDC hash of Agama's XRPL receiving address (pinned)
@@ -45,9 +45,13 @@ contract XrpOnRamp {
     IERC20Onramp public immutable fxrp; // FXRP liquidity released against a proven XRP payment
     IERC20Onramp public immutable pt; // PT forwarded to the payer after the lock
 
-    mapping(bytes32 => bool) public usedTx; // replay protection by XRPL transaction id
+    // Replay protection by XRPL transaction id. Per-contract by design: deploy exactly ONE on-ramp per
+    // treasury address. A second instance bound to the same treasury would only re-honor a payment out
+    // of ITS OWN funded inventory (a loss for that redundant operator, never a theft from a payer).
+    mapping(bytes32 => bool) public usedTx;
 
     event XrpLocked(address indexed user, uint256 amountDrops, uint256 ptOut, bytes32 indexed xrplTxId);
+    event XrpRefunded(address indexed user, uint256 amountDrops, bytes32 indexed xrplTxId); // FXRP delivered unlocked
 
     constructor(bytes32 _treasuryAddressHash, bytes32 _expectedSourceId, address _anchor) {
         relay = IRelay(IFdcRegistry(0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019).getContractAddressByName("Relay"));
@@ -92,8 +96,11 @@ contract XrpOnRamp {
         require(data.responseBody.status == STATUS_SUCCESS, "payment not successful");
         require(data.responseBody.receivingAddressHash == treasuryAddressHash, "wrong receiver");
 
-        // the recipient is the payer's Flare address, carried in the XRP memo (standardPaymentReference)
-        address to = address(uint160(uint256(data.responseBody.standardPaymentReference)));
+        // the recipient is the payer's Flare address in the XRP memo (standardPaymentReference), which
+        // must be a clean 20-byte left-padded value or a fat-fingered memo would mis-route the PT
+        bytes32 ref = data.responseBody.standardPaymentReference;
+        require(uint256(ref) >> 160 == 0, "memo not a padded address");
+        address to = address(uint160(uint256(ref)));
         require(to != address(0), "no recipient in memo");
 
         bytes32 txId = data.requestBody.transactionId;
@@ -105,13 +112,20 @@ contract XrpOnRamp {
         uint256 amountDrops = uint256(received); // XRP drops are 6 decimals, same as FXRP
         require(fxrp.balanceOf(address(this)) >= amountDrops, "onramp out of FXRP");
 
-        // the contract sets the slippage floor from the AMM's fair quote (not par), so a relayer
-        // cannot pass minPtOut=0. Residual same-block sandwich MEV needs a TWAP / private orderflow.
-        (uint256 fairPtOut,) = anchor.previewLock(amountDrops);
-        uint256 minPtOut = fairPtOut * (10000 - SLIP_TOL_BPS) / 10000;
+        // Non-manipulable slippage floor: >= 99% of 1:1 par. PT trades <= par, so a sandwich cannot push
+        // the payer below par-1%, and (unlike a pool-derived quote) this floor cannot be gamed by moving
+        // the pool. Protecting the discount itself would need a TWAP. If the pool cannot honor the lock,
+        // the FXRP is delivered unlocked instead, so a proven payment is never stranded.
+        uint256 minPtOut = amountDrops * PAR_FLOOR_BPS / 10000;
         fxrp.approve(address(anchor), amountDrops);
-        ptOut = anchor.lockFixedRate(amountDrops, minPtOut); // PT is minted to this contract
-        require(pt.transfer(to, ptOut), "pt out"); // forward the locked PT to the payer
-        emit XrpLocked(to, amountDrops, ptOut, txId);
+        try anchor.lockFixedRate(amountDrops, minPtOut) returns (uint256 out) {
+            ptOut = out;
+            require(pt.transfer(to, ptOut), "pt out"); // forward the locked PT to the payer
+            emit XrpLocked(to, amountDrops, ptOut, txId);
+        } catch {
+            fxrp.approve(address(anchor), 0);
+            require(fxrp.transfer(to, amountDrops), "fxrp out"); // refund fallback: never strand the payer
+            emit XrpRefunded(to, amountDrops, txId);
+        }
     }
 }

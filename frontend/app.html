@@ -52,6 +52,16 @@
   .divider{height:1px;background:var(--line);margin:18px 0}
   .pill{font-size:11px;color:var(--faint);border:1px solid var(--line);border-radius:999px;padding:4px 9px}
   .hide{display:none}
+  .how{margin-bottom:16px}
+  .howlead{font-family:var(--serif);font-size:17px;color:var(--ink);margin:0 0 14px;line-height:1.35}
+  .steps{display:flex;gap:8px}
+  .step{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .step .n{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:6px;background:var(--brand-deep);color:var(--brand);font-size:12px;font-weight:700;margin-bottom:8px}
+  .step b{display:block;font-size:12.5px;color:var(--ink);line-height:1.25}
+  .step small{display:block;color:var(--faint);font-size:11px;margin-top:3px;line-height:1.3}
+  .ptyt{margin-top:12px;font-size:12px;color:var(--soft);line-height:1.5;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .ptyt b{color:var(--brand)}
+  .side{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;margin:22px 0 8px;font-weight:600}
 </style>
 </head>
 <body>
@@ -67,9 +77,20 @@
     </div>
   </header>
 
+  <div class="how">
+    <p class="howlead">Lock a fixed rate on your XRP. Your return is set the day you deposit, whatever the yield does.</p>
+    <div class="steps">
+      <div class="step"><span class="n">1</span><b>Deposit FXRP</b><small>into a yield vault, tokenized</small></div>
+      <div class="step"><span class="n">2</span><b>Buy PT at a discount</b><small>the discount is your fixed rate</small></div>
+      <div class="step"><span class="n">3</span><b>Redeem 1:1 at maturity</b><small>rate was fixed on day one</small></div>
+    </div>
+    <div class="ptyt">Your deposit splits into two tokens. <b>PT</b> = your principal, the certainty side (redeems 1:1 at maturity). <b>YT</b> = the variable yield, the upside side. Keep PT to lock a fixed rate — or sell your YT below for guaranteed cash now.</div>
+  </div>
+
+  <div class="side">① Lock certainty (buy PT)</div>
   <div class="card">
     <h1>Lock a fixed rate</h1>
-    <p class="sub">Deposit demo FXRP, buy the principal token at a discount, lock your rate. Redeem 1:1 at maturity.</p>
+    <p class="sub">Deposit demo FXRP, buy the principal token (PT) at a discount. That discount is your fixed return, locked at purchase. Redeem each PT for 1 FXRP at maturity.</p>
 
     <label>You deposit</label>
     <div class="inrow">
@@ -100,9 +121,10 @@
     </div>
   </div>
 
+  <div class="side">② Sell the yield (sell YT) — the other side of the trade</div>
   <div class="card" id="rfqcard" style="display:none">
     <h1 style="font-size:20px">Sell your yield · confidential RFQ</h1>
-    <p class="sub">Sell your YT to the best market-maker quote. MMs quote privately to a Flare Confidential Compute enclave (TEE); only the winning settlement is revealed on chain. Losing quotes never touch the chain.</p>
+    <p class="sub">Hold YT? It pays a <em>variable</em> yield. Sell it now for a guaranteed premium instead. Market makers bid privately inside a Flare Confidential Compute enclave (TEE); the enclave signs only the best offer and that alone settles on chain — losing bids never touch the chain, so your order can't be picked off. This YT demand is what funds someone else's fixed rate.</p>
     <div class="pos"><span class="muted">Your YT</span><span class="v"><span id="balY">-</span> YT</span></div>
     <button id="split" class="btn-ghost" style="margin-top:12px">No YT? Split 100 FXRP → 100 PT + 100 YT</button>
     <label style="margin-top:16px">YT to sell</label>
