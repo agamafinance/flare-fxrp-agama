@@ -15,7 +15,43 @@ XRPFi is yield poor and yield variable: today's vaults pay a few percent that no
 in advance. Agama turns that variable stream into a choice. Buy PT to lock certainty, or buy YT
 to take the upside. Same deposit, two honest sides of the same trade.
 
-## How it works
+## The saver's view (one pool, no jargon)
+
+Most people do not want to think about PT, YT, or an AMM. `FixedRateVault` is a standard
+**ERC-4626 pool** (shares: `arFXRP`, built on OpenZeppelin) that hides all of it: **deposit FXRP,
+see the exact amount you will have at maturity, withdraw more at maturity.** One deposit, one rate,
+one withdrawal. The vault routes the deposit through the machinery below in a single call, so the
+saver only ever sees a single fixed-rate pool and an `arFXRP` balance in their wallet.
+
+```mermaid
+flowchart TB
+  subgraph seen["What the saver sees"]
+    S(["Saver"]) -->|"1 · deposit FXRP"| V["FixedRateVault<br/>arFXRP shares"]
+    V -->|"4 · withdraw at maturity:<br/>deposit + fixed gain"| S
+  end
+  subgraph hood["Under the hood, one call"]
+    V -->|"2 · lockFixedRate"| A["Anchor router"]
+    A -->|"3 · buy PT at a discount"| M["PtAmm<br/>YieldSpace AMM"]
+    M -->|"PT held by the vault<br/>1 PT = 1 arFXRP = 1 FXRP at maturity"| V
+    A -.->|"the YT (variable yield)<br/>funds the fixed side"| R["Confidential RFQ<br/>market makers, TEE"]
+  end
+```
+
+Two properties make it honest, and both are tested:
+
+- **The rate is locked at entry.** Shares are *par-denominated*: 1 `arFXRP` redeems 1:1 for FXRP at
+  maturity, so a 100 FXRP deposit that locks 1.5% mints 101.5 `arFXRP`, and **no later deposit can
+  re-price it** (deliberately not a blended rising-NAV pool that would average everyone's rate).
+- **Donation-proof.** Shares are minted from the AMM's realized fill, not a `totalAssets/supply`
+  ratio, and `totalAssets == totalSupply`, so the classic ERC-4626 donation / inflation attack is a
+  no-op by construction: no donation can change what a deposit mints or a redemption pays.
+
+Proven live on Coston2: a real `deposit(100 FXRP)` minted `101.49 arFXRP`, with
+`totalSupply == totalAssets == PT held` on chain.
+
+## How it works (under the hood)
+
+The saver only sees the pool above. Underneath, four steps manufacture and lock the rate:
 
 1. **Deposit into a vault.** FXRP earns real XRPFi yield in an ERC-4626 vault (e.g. Mystic Core
    FXRP or Bizantine SuperVault), issued as vault shares.
@@ -37,6 +73,7 @@ nears, the YieldSpace curve flattens to constant-sum and PT converges to par mec
 | `SplitToken.sol` | Minimal ERC20 for PT and YT. The YT instance settles yield on every transfer. |
 | `PtAmm.sol` | A real YieldSpace AMM (`x^(1-t) + y^(1-t) = k`) for PT vs FXRP, decimals-aware (real FXRP is 6 decimals), PRBMath fixed point. Buying PT locks a fixed rate. |
 | `Anchor.sol` | The user-facing router. One call to lock a fixed rate, a quote for the front, and 1:1 redemption at maturity. |
+| `FixedRateVault.sol` | The **saver-facing ERC-4626 pool** (OpenZeppelin, shares `arFXRP`). `deposit(FXRP)` routes through Anchor to buy PT and mints par-denominated shares (1 share = 1 FXRP at maturity); `redeem` at maturity routes PT back to FXRP. Term-locked via the standard `max*` guards. Shares come from the AMM fill and `totalAssets == totalSupply`, so the ERC-4626 donation/inflation attack is a no-op. Hides PT/YT entirely from the saver. |
 | `ConfidentialYtRfq.sol` | The confidential YT demand side. Market makers quote privately inside a TEE; the enclave signs only the winning settlement, which this contract verifies (against the attestation-gated key) and executes. |
 | `tee/ConfidentialSpaceRegistry.sol` + `rsa/RsaVerify.sol` | Attestation-gated enclave key, following the real GCP Confidential Space flow. Verifies a Confidential Space attestation **JWT** on chain: RS256 (via the modexp precompile) against Google's signer key, then reads each claim at its **exact JSON path** (`tee/JsonLite.sol`, not a substring scan, so operator-controlled `env`/label keys cannot spoof a claim) and requires a non-debuggable production Intel TDX enclave running the approved image. Owner-gated, one-time per token, and expiry-checked. `EnclaveRegistry.sol` is a simpler RS256-over-a-statement variant. |
 | `FtsoReader.sol` | Reads the enshrined FTSOv2 oracle to denominate FXRP positions in USD (front and enclave). |
@@ -58,8 +95,13 @@ Agama uses five of Flare's enshrined protocols, each doing real work, not a supe
 
 ## Proven
 
-`forge test` runs **34 tests, all green**, including:
+`forge test` runs **42 tests, all green**, including:
 
+- The saver pool (`FixedRateVault`, OpenZeppelin ERC-4626): a deposit locks the rate at entry
+  (par-denominated `arFXRP` shares), the outcome is independent of the realized yield, **two savers
+  entering at different times each keep their own locked rate** (no blending), the ERC-4626
+  donation/inflation attack changes neither mint nor redemption, and the term lock holds (deposits
+  close at maturity, withdrawals open at maturity).
 - The full lifecycle: split, YT captures the yield, PT redeems principal 1:1.
 - Sell YT to lock certainty; the yield accounting splits correctly on transfer.
 - The YieldSpace AMM: PT trades at a discount, implies a 5% fixed APR, converges to par at maturity.
@@ -132,8 +174,9 @@ Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can tr
 | Contract | Address |
 | --- | --- |
 | Anchor | `0x94F3c1D2cB99B0EFa6C07C9d7aCD47f8FBe906E0` |
+| **FixedRateVault** (saver pool, ERC-4626 `arFXRP`) | `0xcEe689fA3fcB23BF7bb62383346C9178B856Fc7D` |
 | FXRP (demo) | `0xb23b0daDa02c86D2A7E76d2060c34Fff14D1E3A6` |
-| Vault | `0x6dec4d8bfb94eee9228adf330260ab31e0afd2d9` |
+| MockVault (underlying XRPFi yield) | `0x6dec4d8bfb94eee9228adf330260ab31e0afd2d9` |
 | YieldSplitter | `0xcB633439CCa82035Dfb0553Caed2552818E3a29E` |
 | PT | `0x7779771976CF16a8EF522E03158620d4dAA516c1` |
 | YT | `0x1592f5cd44676f182162AC9DC09F9B12C68E0B4D` |
@@ -155,7 +198,7 @@ Explorer: https://coston2-explorer.flare.network/address/0x2046d700eC62D21d89774
 ## Run it
 
 ```bash
-forge test              # 10/10, plus a live Flare fork test
+forge test              # 42/42, plus a live Flare fork test
 forge test -vv          # with the logged numbers
 ```
 
