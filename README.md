@@ -95,7 +95,7 @@ Agama uses five of Flare's enshrined protocols, each doing real work, not a supe
 
 ## Proven
 
-`forge test` runs **42 tests, all green**, including:
+`forge test` runs **44 tests, all green**, including:
 
 - The saver pool (`FixedRateVault`, OpenZeppelin ERC-4626): a deposit locks the rate at entry
   (par-denominated `arFXRP` shares), the outcome is independent of the realized yield, **two savers
@@ -198,7 +198,7 @@ Explorer: https://coston2-explorer.flare.network/address/0x2046d700eC62D21d89774
 ## Run it
 
 ```bash
-forge test              # 42/42, plus a live Flare fork test
+forge test              # 44/44, plus a live Flare fork test
 forge test -vv          # with the logged numbers
 ```
 

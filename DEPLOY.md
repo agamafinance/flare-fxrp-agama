@@ -5,7 +5,7 @@ YieldSplitter (PT/YT) + PtAmm (YieldSpace) + Anchor router.
 
 ## Status
 
-- **10/10 Foundry tests green** (`forge test`): splitter, AMM, E2E, unified router at 18 & 6
+- **44/44 Foundry tests green** (`forge test`): splitter, AMM, E2E, unified router at 18 & 6
   decimals, plus a live Flare-mainnet fork test against the real bizFXRP vault.
 - **Deploy script proven on a local anvil**: full stack deploys, seeds a deep pool, and the
   deployed `Anchor.previewLock(500 FXRP)` returns 505.44 PT @ 5.00% fixed APR.
@@ -19,7 +19,6 @@ You need a deployer key funded with C2FLR (gas only; the demo FXRP is minted by 
 
 2. **Broadcast:**
    ```bash
-   cd anchor-poc
    PRIVATE_KEY=0x<your funded key> \
      forge script script/Deploy.s.sol:Deploy --rpc-url coston2 --broadcast
    ```

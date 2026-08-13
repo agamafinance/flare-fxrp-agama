@@ -38,7 +38,7 @@ export default function Page() {
                   <span>liquidations, ever</span>
                 </div>
                 <div className="stat">
-                  <b>42</b>
+                  <b>44</b>
                   <span>tests, all green</span>
                 </div>
               </div>
