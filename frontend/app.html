@@ -59,9 +59,12 @@
   .step .n{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:6px;background:var(--brand-deep);color:var(--brand);font-size:12px;font-weight:700;margin-bottom:8px}
   .step b{display:block;font-size:12.5px;color:var(--ink);line-height:1.25}
   .step small{display:block;color:var(--faint);font-size:11px;margin-top:3px;line-height:1.3}
-  .ptyt{margin-top:12px;font-size:12px;color:var(--soft);line-height:1.5;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
-  .ptyt b{color:var(--brand)}
-  .side{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;margin:22px 0 8px;font-weight:600}
+  .adv{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px 22px;margin-bottom:16px}
+  .adv[open]{padding-bottom:22px}
+  .adv summary{cursor:pointer;font-size:12px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;font-weight:600;list-style:none;display:flex;align-items:center;gap:8px}
+  .adv summary::-webkit-details-marker{display:none}
+  .adv summary::before{content:"▸";color:var(--brand);font-size:11px}
+  .adv[open] summary::before{content:"▾"}
 </style>
 </head>
 <body>
@@ -78,19 +81,17 @@
   </header>
 
   <div class="how">
-    <p class="howlead">Lock a fixed rate on your XRP. Your return is set the day you deposit, whatever the yield does.</p>
+    <p class="howlead">Deposit XRP, earn a fixed rate. Your return is set the day you deposit, and it does not move with the market.</p>
     <div class="steps">
-      <div class="step"><span class="n">1</span><b>Deposit FXRP</b><small>into a yield vault, tokenized</small></div>
-      <div class="step"><span class="n">2</span><b>Buy PT at a discount</b><small>the discount is your fixed rate</small></div>
-      <div class="step"><span class="n">3</span><b>Redeem 1:1 at maturity</b><small>rate was fixed on day one</small></div>
+      <div class="step"><span class="n">1</span><b>Deposit FXRP</b><small>one transaction, no lock-up jargon</small></div>
+      <div class="step"><span class="n">2</span><b>Your rate is fixed</b><small>you see the exact end amount up front</small></div>
+      <div class="step"><span class="n">3</span><b>Withdraw more at maturity</b><small>get your deposit back plus the fixed gain</small></div>
     </div>
-    <div class="ptyt">Your deposit splits into two tokens. <b>PT</b> = your principal, the certainty side (redeems 1:1 at maturity). <b>YT</b> = the variable yield, the upside side. Keep PT to lock a fixed rate — or sell your YT below for guaranteed cash now.</div>
   </div>
 
-  <div class="side">① Lock certainty (buy PT)</div>
   <div class="card">
-    <h1>Lock a fixed rate</h1>
-    <p class="sub">Deposit demo FXRP, buy the principal token (PT) at a discount. That discount is your fixed return, locked at purchase. Redeem each PT for 1 FXRP at maturity.</p>
+    <h1>Fixed-rate savings</h1>
+    <p class="sub">Deposit demo FXRP and lock a fixed return. You see exactly what you will have at maturity before you confirm, whatever the market yield does in between.</p>
 
     <label>You deposit</label>
     <div class="inrow">
@@ -99,32 +100,31 @@
     </div>
 
     <div class="quote">
-      <div><span class="bigrate"><span id="apr">–</span><small>% APR fixed</small></span></div>
-      <div class="qrow"><span>PT you receive</span><b><span id="ptout">–</span> PT</b></div>
-      <div class="qrow"><span>Locked profit at maturity</span><b style="color:var(--up)"><span id="profit">–</span> FXRP <span id="profitUsd" style="color:var(--faint);font-weight:500"></span></b></div>
+      <div><span class="bigrate"><span id="apr">–</span><small>% fixed / year</small></span></div>
+      <div class="qrow"><span>At maturity you receive</span><b><span id="ptout">–</span> FXRP</b></div>
+      <div class="qrow"><span>Your fixed gain</span><b style="color:var(--up)"><span id="profit">–</span> FXRP <span id="profitUsd" style="color:var(--faint);font-weight:500"></span></b></div>
       <div class="qrow"><span>XRP/USD · live FTSO oracle</span><b>$<span id="xrpusd">–</span></b></div>
     </div>
 
-    <button id="lock" class="btn-primary" disabled>Connect wallet to lock</button>
+    <button id="lock" class="btn-primary" disabled>Connect wallet to deposit</button>
     <button id="mint" class="btn-ghost hide">Mint 1,000 demo FXRP</button>
     <div id="status" class="status"></div>
   </div>
 
   <div class="card" id="poscard">
-    <div class="pos"><span class="muted">Your FXRP</span><span class="v"><span id="balF">–</span> FXRP</span></div>
+    <div class="pos"><span class="muted">In your wallet</span><span class="v"><span id="balF">–</span> FXRP</span></div>
     <div class="divider"></div>
-    <div class="pos"><span class="muted">Your PT (certainty)</span><span class="v"><span id="balP">–</span> PT</span></div>
+    <div class="pos"><span class="muted">Saving at a fixed rate</span><span class="v"><span id="balP">–</span> FXRP <span class="muted" style="font-size:11px">at maturity</span></span></div>
     <div class="divider"></div>
     <div class="pos">
       <div><span class="muted">Maturity</span><div id="matWhen" class="muted" style="margin-top:2px"></div></div>
-      <button id="redeem" class="btn-wallet" disabled>Redeem PT</button>
+      <button id="redeem" class="btn-wallet" disabled>Withdraw</button>
     </div>
   </div>
 
-  <div class="side">② Sell the yield (sell YT) — the other side of the trade</div>
-  <div class="card" id="rfqcard" style="display:none">
-    <h1 style="font-size:20px">Sell your yield · confidential RFQ</h1>
-    <p class="sub">Hold YT? It pays a <em>variable</em> yield. Sell it now for a guaranteed premium instead. Market makers bid privately inside a Flare Confidential Compute enclave (TEE); the enclave signs only the best offer and that alone settles on chain — losing bids never touch the chain, so your order can't be picked off. This YT demand is what funds someone else's fixed rate.</p>
+  <details class="adv" id="rfqcard" style="display:none">
+    <summary>Advanced · for market makers and LPs</summary>
+    <p class="sub" style="margin-top:14px">Under the hood, every deposit splits into a principal claim (what funds your fixed rate) and a variable-yield claim (YT). Savers never touch YT. If you hold YT, you can sell it here for a guaranteed premium instead of riding the variable yield. Market makers bid privately inside a Flare Confidential Compute enclave (TEE); the enclave signs only the best offer and that alone settles on chain, so losing bids never touch the chain and your order can't be picked off. This YT demand is what funds the savers' fixed rate.</p>
     <div class="pos"><span class="muted">Your YT</span><span class="v"><span id="balY">-</span> YT</span></div>
     <button id="split" class="btn-ghost" style="margin-top:12px">No YT? Split 100 FXRP → 100 PT + 100 YT</button>
     <label style="margin-top:16px">YT to sell</label>
@@ -140,7 +140,7 @@
     <button id="openRfq" class="btn-primary">Open confidential RFQ</button>
     <button id="cancelRfq" class="btn-ghost hide">Cancel RFQ (reclaim YT)</button>
     <div id="rfqStatus" class="status"></div>
-  </div>
+  </details>
 
   <div style="text-align:center"><span class="pill" id="chainpill">not connected</span></div>
 </div>
@@ -162,6 +162,7 @@ const CONFIG = {
     chainId: 114, name:'Coston2', rpc:'https://coston2-api.flare.network/ext/C/rpc',
     symbol:'C2FLR',
     anchor:'0x94F3c1D2cB99B0EFa6C07C9d7aCD47f8FBe906E0',
+    vault:'0xcEe689fA3fcB23BF7bb62383346C9178B856Fc7D', // FixedRateVault (arFXRP), OZ ERC-4626
     fxrp:'0xb23b0daDa02c86D2A7E76d2060c34Fff14D1E3A6',
     pt:'0x7779771976CF16a8EF522E03158620d4dAA516c1',
     yt:'0x1592f5cd44676f182162AC9DC09F9B12C68E0B4D',
@@ -177,6 +178,12 @@ const ANCHOR_ABI = [
   {type:'function',name:'lockFixedRate',stateMutability:'nonpayable',inputs:[{type:'uint256'},{type:'uint256'}],outputs:[{type:'uint256'}]},
   {type:'function',name:'redeem',stateMutability:'nonpayable',inputs:[{type:'uint256'}],outputs:[{type:'uint256'}]},
   {type:'function',name:'maturity',stateMutability:'view',inputs:[],outputs:[{type:'uint256'}]},
+];
+const VAULT_ABI = [
+  {type:'function',name:'deposit',stateMutability:'nonpayable',inputs:[{type:'uint256'},{type:'address'}],outputs:[{type:'uint256'}]},
+  {type:'function',name:'redeem',stateMutability:'nonpayable',inputs:[{type:'uint256'},{type:'address'},{type:'address'}],outputs:[{type:'uint256'}]},
+  {type:'function',name:'balanceOf',stateMutability:'view',inputs:[{type:'address'}],outputs:[{type:'uint256'}]},
+  {type:'function',name:'maxRedeem',stateMutability:'view',inputs:[{type:'address'}],outputs:[{type:'uint256'}]},
 ];
 const ERC20_ABI = [
   {type:'function',name:'mint',stateMutability:'nonpayable',inputs:[{type:'address'},{type:'uint256'}],outputs:[]},
@@ -204,6 +211,9 @@ let net = 'coston2', cfg = CONFIG.coston2, pub, wallet, account, maturity = 0n, 
 const $ = id => document.getElementById(id);
 const fmt = (v,dp=2) => Number(formatUnits(v, DEC)).toLocaleString('en-US',{maximumFractionDigits:dp});
 function setStatus(msg, kind=''){ const s=$('status'); s.textContent=msg; s.className='status '+kind; }
+// The saver deposits through the ERC-4626 FixedRateVault (arFXRP shares) once it is set; until then
+// the front falls back to the Anchor router directly (PT), so it works before and after deploy.
+const useVault = () => cfg.vault && !cfg.vault.startsWith('0x0000');
 
 function makePublic(){ pub = createPublicClient({ transport: http(cfg.rpc) }); }
 
@@ -234,14 +244,15 @@ async function refreshQuote(){
 async function refreshBalances(){
   if(!account || cfg.fxrp.startsWith('0x0000')) return;
   try{
+    const savedAt = useVault() ? cfg.vault : cfg.pt; // arFXRP shares (vault) or PT (fallback)
     const [bf, bp] = await Promise.all([
       pub.readContract({address:cfg.fxrp, abi:ERC20_ABI, functionName:'balanceOf', args:[account]}),
-      pub.readContract({address:cfg.pt, abi:ERC20_ABI, functionName:'balanceOf', args:[account]}),
+      pub.readContract({address:savedAt, abi:ERC20_ABI, functionName:'balanceOf', args:[account]}),
     ]);
     $('balF').textContent = fmt(bf); $('balP').textContent = fmt(bp);
     const matured = maturity>0n && BigInt(Math.floor(Date.now()/1000)) >= maturity;
     $('redeem').disabled = !(bp>0n && matured);
-    $('redeem').textContent = matured ? 'Redeem PT' : 'Locked till maturity';
+    $('redeem').textContent = matured ? 'Withdraw' : 'Locked till maturity';
   }catch(e){ /* ignore */ }
 }
 
@@ -281,7 +292,7 @@ async function connect(){
     $('connect').textContent = account.slice(0,6)+'…'+account.slice(-4);
     $('chainpill').textContent = cfg.name+' · connected';
     $('mint').classList.remove('hide');
-    $('lock').disabled = false; $('lock').textContent = 'Lock fixed rate';
+    $('lock').disabled = false; $('lock').textContent = 'Deposit & lock rate';
     try{ maturity = await pub.readContract({address:cfg.anchor, abi:ANCHOR_ABI, functionName:'maturity'});
       const d=new Date(Number(maturity)*1000); $('matWhen').textContent = d.toLocaleDateString(); }catch(_){}
     setStatus('');
@@ -313,18 +324,30 @@ $('lock').onclick = async () => {
   const amt = parseUnits($('amt').value||'0', DEC);
   if(!(amt>0n)){ setStatus('Enter an amount','err'); return; }
   await tx(async () => {
+    if(useVault()){
+      await ensureAllowance(cfg.fxrp, cfg.vault, amt);
+      return wallet.writeContract({account, address:cfg.vault, abi:VAULT_ABI, functionName:'deposit', args:[amt, account]});
+    }
     await ensureAllowance(cfg.fxrp, cfg.anchor, amt);
     return wallet.writeContract({account, address:cfg.anchor, abi:ANCHOR_ABI, functionName:'lockFixedRate', args:[amt, 0n]});
-  }, 'Locking your rate…', 'Rate locked ✓ — you now hold PT');
+  }, 'Depositing and locking your rate…', 'Deposited ✓ — your rate is locked till maturity');
 };
 
 $('redeem').onclick = async () => {
+  if(useVault()){
+    const shares = await pub.readContract({address:cfg.vault, abi:VAULT_ABI, functionName:'balanceOf', args:[account]});
+    if(!(shares>0n)){ setStatus('Nothing to withdraw','err'); return; }
+    await tx(() => // no approval needed: the vault redeems its own PT internally
+      wallet.writeContract({account, address:cfg.vault, abi:VAULT_ABI, functionName:'redeem', args:[shares, account, account]}),
+      'Withdrawing your deposit plus the fixed gain…', 'Withdrawn ✓ — deposit and fixed gain back in FXRP');
+    return;
+  }
   const bp = await pub.readContract({address:cfg.pt, abi:ERC20_ABI, functionName:'balanceOf', args:[account]});
   if(!(bp>0n)){ setStatus('No PT to redeem','err'); return; }
   await tx(async () => {
     await ensureAllowance(cfg.pt, cfg.anchor, bp);
     return wallet.writeContract({account, address:cfg.anchor, abi:ANCHOR_ABI, functionName:'redeem', args:[bp]});
-  }, 'Redeeming PT 1:1…', 'Redeemed ✓ — principal back in FXRP');
+  }, 'Withdrawing your deposit plus the fixed gain…', 'Withdrawn ✓ — deposit and fixed gain back in FXRP');
 };
 
 $('split').onclick = async () => {
@@ -368,7 +391,7 @@ $('cancelRfq').onclick = async () => {
 
 $('net').onchange = (e) => { net=e.target.value; cfg=CONFIG[net]; makePublic(); account=null; myRfqId=0n;
   $('connect').textContent='Connect'; $('chainpill').textContent='not connected'; $('lock').disabled=true;
-  $('lock').textContent='Connect wallet to lock'; $('mint').classList.add('hide');
+  $('lock').textContent='Connect wallet to deposit'; $('mint').classList.add('hide');
   $('balF').textContent='–'; $('balP').textContent='–'; $('rfqcard').style.display='none'; refreshQuote(); };
 $('connect').onclick = connect;
 $('amt').addEventListener('input', refreshQuote);
