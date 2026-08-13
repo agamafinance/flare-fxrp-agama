@@ -1,0 +1,26 @@
+{
+  "name": "agama-fixed-rate-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3005",
+    "build": "next build",
+    "start": "next start -p 3005",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "14.2.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "viem": "2.21.19",
+    "wagmi": "2.12.17",
+    "@wagmi/core": "2.13.8",
+    "@tanstack/react-query": "5.56.2"
+  },
+  "devDependencies": {
+    "typescript": "5.6.2",
+    "@types/node": "20.16.5",
+    "@types/react": "18.3.5",
+    "@types/react-dom": "18.3.0"
+  }
+}
