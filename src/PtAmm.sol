@@ -135,6 +135,14 @@ contract PtAmm {
         emit Swap(msg.sender, true, dxIn, dyOut);
     }
 
+    /// Read-only quote: FXRP received for `dyIn` PT (early exit). Rounds output DOWN, matching the swap.
+    function previewPtForFxrp(uint256 dyIn) public view returns (uint256 dxOut) {
+        UD60x18 a = _a();
+        UD60x18 rhs = _xN().pow(a).add(_yN().pow(a)).sub(_yN().add(ud(dyIn * SCALE_Y)).pow(a));
+        uint256 xNewTokens = (rhs.pow(ud(1e18).div(a)).unwrap() + SCALE_X - 1) / SCALE_X;
+        dxOut = fxrpReserve - xNewTokens;
+    }
+
     /// Swap exact PT in for FXRP out.
     function swapPtForFxrp(uint256 dyIn, uint256 minFxrpOut, address to) external returns (uint256 dxOut) {
         UD60x18 a = _a();
