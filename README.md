@@ -167,6 +167,12 @@ solvency) and globally rate-limited, so a caller cannot amplify work through the
 quote rejected, an oversized (33-quote) request rejected, and the best authentic quote signed by the
 enclave and settled on chain.
 
+**Live in the app.** The `/rfq` page in `web/` drives this end to end. "Request quotes" makes your
+wallet the seller: it splits your FXRP into PT + YT and opens your own on-chain RFQ, then the deployed
+backend (`web/app/api/tee-demo`) submits the market-maker bids to the live enclave, gets the winning
+signature and relays the `settle` on chain. A per-step tracker shows every transaction, and the winning
+premium lands in your wallet. Running on app.agama.finance/flare/rfq and agama-fixed-rate.vercel.app/rfq.
+
 ## Live on Coston2 (chainId 114)
 
 Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can try it).
@@ -222,8 +228,11 @@ cd web && pnpm install && pnpm dev    # http://localhost:3005
 ```
 
 Connect an injected wallet on Flare Coston2, mint demo FXRP on **Faucet**, lock a fixed rate on
-**Earn** (withdraw anytime at market or 1:1 at maturity), and open the sealed-bid **RFQ**. It talks
-to the live Coston2 saver stack above.
+**Earn** (withdraw anytime at market or 1:1 at maturity), and sell your yield on **RFQ**: "Request
+quotes" splits your FXRP into PT + YT, opens your own on-chain RFQ, the live enclave runs the
+sealed-bid auction and relays the winning `settle` on chain, and the premium lands in your wallet.
+Earn / Portfolio / Faucet work read-only; the **RFQ** settlement needs the enclave + relayer keys in
+the environment, see [`web/.env.example`](./web/.env.example).
 
 A lightweight self-contained option (`frontend/app.html`, viem in a single file) also runs against a
 local anvil:
