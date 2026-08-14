@@ -142,7 +142,7 @@ manually set key. `ConfidentialSpaceRegistry` registers the enclave key only aft
 chain, a real **GCP Confidential Space attestation JWT**: RS256 (`rsa/RsaVerify.sol` via the modexp
 precompile) against Google's confidentialspace-sign key, then it base64url-decodes the token payload
 and requires the issuer, the approved `image_digest`, the presented enclave key as the token
-`eat_nonce`, and — crucially — that the enclave is a **non-debuggable production Intel TDX** one:
+`eat_nonce`, and, crucially, that the enclave is a **non-debuggable production Intel TDX** one:
 `hwmodel GCP_INTEL_TDX`, `swname CONFIDENTIAL_SPACE`, `dbgstat disabled-since-boot`. A debug enclave
 (where the operator could read or forge the key) and a non-TDX platform are both rejected on chain
 (two dedicated tests). `ConfidentialYtRfq` reads its trusted key from the registry.
