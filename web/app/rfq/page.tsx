@@ -1,19 +1,22 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
 import clsx from 'clsx';
-import { ArrowRight, Lock, ShieldCheck, Sparkles, ExternalLink, Check } from 'lucide-react';
+import { Lock, ShieldCheck, Sparkles, ExternalLink, Check, Loader2, X } from 'lucide-react';
 import { TokenIcon } from '@/components/icons/TokenIcon';
-import { explorerTx } from '@/lib/flare/config';
+import { ADDR, explorerTx } from '@/lib/flare/config';
+import { ERC20_ABI, SPLITTER_ABI, RFQ_ABI } from '@/lib/flare/abis';
+import { pub, send, ensureAllowance } from '@/lib/flare/useFlare';
+import { useFlareWallet } from '@/lib/flare/WalletProvider';
 
 type Bid = { mm: string; price: number; won: boolean };
 type Result = {
+  mode: 'demo' | 'user';
   seller: string;
   enclave: { address: string; issuer?: string; hwmodel?: string; dbgstat?: string; imageDigest?: string };
   onchainTrusted: boolean;
   rfqId: number;
-  openTx: string;
+  openTx: string | null;
   reserve: number;
   forgedRejected: boolean;
   bids: Bid[];
@@ -21,36 +24,70 @@ type Result = {
   price: number;
   settleTx: string;
 };
+type StepStatus = 'pending' | 'active' | 'done' | 'error';
+type Step = { key: string; label: string; hint?: string; status: StepStatus; tx?: string };
 
 const CARD = 'rounded-2xl bg-[#fdfaf1] p-6 shadow-[0_1px_3px_rgba(20,50,35,0.06),0_10px_30px_rgba(20,50,35,0.09)]';
+const AMT = 100_000000n; // 100 YT / 100 FXRP (6 decimals)
 const short = (a?: string) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '—');
 
+const FRESH: Step[] = [
+  { key: 'split', label: 'Split 100 FXRP into principal + yield', hint: 'you sign', status: 'active' },
+  { key: 'open', label: 'Open your sealed-bid RFQ (escrow the YT)', hint: 'you sign', status: 'pending' },
+  { key: 'settle', label: 'Market makers bid · enclave signs · settled on chain', hint: '~15s, no signature', status: 'pending' },
+];
+
 export default function FlareRfqPage() {
+  const { address, connect } = useFlareWallet();
   const [phase, setPhase] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [res, setRes] = useState<Result | null>(null);
   const [err, setErr] = useState('');
+  const [steps, setSteps] = useState<Step[]>([]);
 
-  const run = async () => {
-    setPhase('running');
-    setErr('');
+  const reset = () => { setPhase('idle'); setRes(null); setErr(''); setSteps([]); };
+
+  // seller flow: the connected wallet splits FXRP -> YT, opens its own RFQ, then the backend runs the
+  // market-maker bids + enclave settlement, and the winning premium lands in the user's wallet.
+  const requestQuotes = async () => {
+    if (!address) { await connect(); return; }
+    const a = address as `0x${string}`;
+    setPhase('running'); setErr(''); setRes(null);
+    const s = FRESH.map((x) => ({ ...x }));
+    setSteps(s);
+    const upd = (i: number, patch: Partial<Step>) => setSteps((prev) => prev.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
+    const failAt = (i: number, msg: string) => { upd(i, { status: 'error' }); setErr(msg); setPhase('error'); };
+
     try {
-      const r = await fetch('/api/tee-demo', { method: 'POST' });
+      const bal = (await pub.readContract({ address: ADDR.fxrp, abi: ERC20_ABI, functionName: 'balanceOf', args: [a] })) as bigint;
+      if (bal < AMT) return failAt(0, 'You need at least 100 FXRP. Mint some on the Faucet first.');
+
+      // 1. split FXRP -> PT + YT
+      await ensureAllowance(a, ADDR.fxrp, ADDR.splitter, AMT);
+      const splitTx = await send(a, ADDR.splitter, SPLITTER_ABI, 'split', [AMT]);
+      upd(0, { status: 'done', tx: splitTx }); upd(1, { status: 'active' });
+
+      // 2. open the RFQ, escrowing the YT
+      await ensureAllowance(a, ADDR.yt, ADDR.rfq, AMT);
+      const openTx = await send(a, ADDR.rfq, RFQ_ABI, 'openRfq', [AMT, 2_000000n]);
+      const rfqId = ((await pub.readContract({ address: ADDR.rfq, abi: RFQ_ABI, functionName: 'nextId' })) as bigint) - 1n;
+      upd(1, { status: 'done', tx: openTx }); upd(2, { status: 'active' });
+
+      // 3. backend: sealed bids + enclave settlement for YOUR rfqId
+      const r = await fetch('/api/tee-demo', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rfqId: Number(rfqId) }) });
       const j = await r.json();
-      if (!r.ok) {
-        setErr(j.error || 'settlement failed');
-        setPhase('error');
-        return;
-      }
-      setRes(j as Result);
-      setPhase('done');
+      if (!r.ok) return failAt(2, j.error || 'settlement failed');
+      upd(2, { status: 'done', tx: j.settleTx });
+      setRes(j as Result); setPhase('done');
     } catch (e) {
-      setErr((e as Error)?.message || 'network error');
-      setPhase('error');
+      const x = e as { shortMessage?: string; message?: string };
+      setSteps((prev) => prev.map((st) => (st.status === 'active' ? { ...st, status: 'error' } : st)));
+      setErr(x?.shortMessage || x?.message || 'failed'); setPhase('error');
     }
   };
 
   const running = phase === 'running';
   const done = phase === 'done' && !!res;
+  const started = steps.length > 0;
   const bids: Bid[] = res?.bids ?? [
     { mm: '', price: 0, won: true },
     { mm: '', price: 0, won: false },
@@ -102,17 +139,60 @@ export default function FlareRfqPage() {
                 <span className="font-medium text-fg">GCP Confidential Space</span>
               </div>
 
-              <button
-                onClick={run}
-                disabled={running}
-                className="mt-4 w-full rounded-full bg-[#254839] px-5 py-3.5 text-[15px] font-medium text-[#fdf8ed] transition-colors hover:bg-[#1F3D31] disabled:opacity-45"
-              >
-                {running ? 'Running confidential auction…' : done ? 'Run again' : 'Request quotes'}
-              </button>
-              {phase === 'error' && <p className="mt-3 text-center text-[12px] text-red-600 break-words">{err}</p>}
-              <p className="mt-3 text-center text-[12px] text-fg-muted">
-                Opens a real RFQ and settles the winner on chain (two Coston2 txs, about 15s).
-              </p>
+              {!started ? (
+                <>
+                  {!address ? (
+                    <button onClick={connect} className="mt-4 w-full rounded-full bg-[#254839] px-5 py-3.5 text-[15px] font-medium text-[#fdf8ed] transition-colors hover:bg-[#1F3D31]">
+                      Connect wallet to request quotes
+                    </button>
+                  ) : (
+                    <button onClick={requestQuotes} className="mt-4 w-full rounded-full bg-[#254839] px-5 py-3.5 text-[15px] font-medium text-[#fdf8ed] transition-colors hover:bg-[#1F3D31]">
+                      Request quotes
+                    </button>
+                  )}
+                  <p className="mt-3 text-center text-[12px] text-fg-muted">
+                    Request quotes splits your FXRP into principal + yield, opens a sealed-bid RFQ, and pays
+                    you the winning premium. About 3 signatures.
+                  </p>
+                </>
+              ) : (
+                <>
+                  {/* live stepper */}
+                  <ol className="mt-5 space-y-3.5">
+                    {steps.map((s) => (
+                      <li key={s.key} className="flex items-start gap-3">
+                        <StepIcon status={s.status} n={steps.indexOf(s) + 1} />
+                        <div className="min-w-0 flex-1 pt-0.5">
+                          <div className={clsx('text-[13.5px] leading-snug', s.status === 'pending' ? 'text-fg-muted' : 'text-fg font-medium')}>
+                            {s.label}
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-2 text-[12px]">
+                            {s.status === 'done' && s.tx ? (
+                              <a href={explorerTx(s.tx)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[#254839] underline-offset-2 hover:underline">
+                                {short(s.tx)} <ExternalLink className="h-3 w-3" />
+                              </a>
+                            ) : s.status === 'active' ? (
+                              <span className="text-fg-muted">{s.hint || 'in progress…'}</span>
+                            ) : s.status === 'error' ? (
+                              <span className="text-red-600">failed</span>
+                            ) : (
+                              <span className="text-fg-muted/70">{s.hint}</span>
+                            )}
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+
+                  {phase === 'error' && <p className="mt-4 text-center text-[12px] text-red-600 break-words">{err}</p>}
+
+                  {(done || phase === 'error') && (
+                    <button onClick={reset} className="mt-4 w-full rounded-full bg-[#254839] px-5 py-3.5 text-[15px] font-medium text-[#fdf8ed] transition-colors hover:bg-[#1F3D31]">
+                      {done ? 'Request quotes again' : 'Try again'}
+                    </button>
+                  )}
+                </>
+              )}
             </div>
 
             {/* Result */}
@@ -120,7 +200,7 @@ export default function FlareRfqPage() {
               <div className="flex items-center justify-between">
                 <h2 className="text-[13px] uppercase tracking-wider text-fg-muted">Sealed bids</h2>
                 <span className="text-[12px] text-fg-muted">
-                  {done ? `settled · RFQ #${res!.rfqId}` : running ? 'sealing…' : '—'}
+                  {done ? `settled · RFQ #${res!.rfqId} · you` : running ? 'sealing…' : '—'}
                 </span>
               </div>
 
@@ -132,15 +212,11 @@ export default function FlareRfqPage() {
                       key={i}
                       className={clsx(
                         'flex items-center gap-3 rounded-2xl px-4 py-3.5 transition-colors',
-                        win ? 'bg-[#254839]' : 'bg-white/60 border border-[#254839]/10'
+                        win ? 'bg-[#254839]' : 'bg-white/60 border border-[#254839]/10',
+                        running && 'animate-pulse'
                       )}
                     >
-                      <span
-                        className={clsx(
-                          'flex h-8 w-8 items-center justify-center rounded-full text-[12px] font-semibold',
-                          win ? 'bg-[#fdf8ed]/15 text-[#fdf8ed]' : 'bg-[#254839]/[0.08] text-[#254839]'
-                        )}
-                      >
+                      <span className={clsx('flex h-8 w-8 items-center justify-center rounded-full text-[12px] font-semibold', win ? 'bg-[#fdf8ed]/15 text-[#fdf8ed]' : 'bg-[#254839]/[0.08] text-[#254839]')}>
                         {`0${i + 1}`}
                       </span>
                       <div className="min-w-0">
@@ -167,6 +243,9 @@ export default function FlareRfqPage() {
 
               {done && res ? (
                 <div className="mt-4 space-y-3">
+                  <div className="flex items-center gap-2 rounded-2xl bg-[#254839]/[0.06] px-4 py-2.5 text-[13px] text-fg">
+                    <Check className="h-4 w-4 text-[#254839]" /> {res.price.toFixed(2)} FXRP premium paid to your wallet ({short(res.seller)}).
+                  </div>
                   {res.forgedRejected && (
                     <div className="flex items-center gap-2 text-[13px] text-fg-muted">
                       <Check className="h-4 w-4 text-[#254839]" /> A quote forged for another maker was rejected off-chain.
@@ -183,31 +262,21 @@ export default function FlareRfqPage() {
                       <dt className="text-fg-muted">Key</dt>
                       <dd className="font-mono text-fg break-all">{short(res.enclave.address)}</dd>
                       <dt className="text-fg-muted">Platform</dt>
-                      <dd className="text-fg">
-                        {res.enclave.hwmodel || 'Intel TDX'} · {res.enclave.dbgstat || 'disabled-since-boot'}
-                      </dd>
+                      <dd className="text-fg">{res.enclave.hwmodel || 'Intel TDX'} · {res.enclave.dbgstat || 'disabled-since-boot'}</dd>
                       <dt className="text-fg-muted">Image</dt>
                       <dd className="font-mono text-fg break-all">{(res.enclave.imageDigest || '').slice(0, 24) || '—'}…</dd>
                     </dl>
                     <div className="mt-2 flex flex-wrap gap-3 text-[12px]">
-                      <a href={explorerTx(res.openTx)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[#254839] underline-offset-2 hover:underline">
-                        open RFQ <ExternalLink className="h-3 w-3" />
-                      </a>
-                      <a href={explorerTx(res.settleTx)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[#254839] underline-offset-2 hover:underline">
-                        settle tx <ExternalLink className="h-3 w-3" />
-                      </a>
+                      {res.openTx && (
+                        <a href={explorerTx(res.openTx)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[#254839] underline-offset-2 hover:underline">open RFQ <ExternalLink className="h-3 w-3" /></a>
+                      )}
+                      <a href={explorerTx(res.settleTx)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[#254839] underline-offset-2 hover:underline">settle tx <ExternalLink className="h-3 w-3" /></a>
                     </div>
-                    <Link href="/" className="group mt-3 inline-flex items-center gap-1.5 text-[13px] font-medium text-[#254839]">
-                      Lock your fixed rate on Earn
-                      <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-                    </Link>
                   </div>
                 </div>
               ) : (
                 <p className="mt-4 text-center text-[13px] text-fg-muted">
-                  {running
-                    ? 'Two sealed bids to the enclave, winner signed in the TEE, settled on chain.'
-                    : 'Submit a request to open the auction.'}
+                  {running ? 'Sealed bids to the enclave, winner signed in the TEE, settled on chain.' : 'Request quotes to open your auction.'}
                 </p>
               )}
             </div>
@@ -226,6 +295,16 @@ export default function FlareRfqPage() {
       </section>
     </>
   );
+}
+
+function StepIcon({ status, n }: { status: StepStatus; n: number }) {
+  if (status === 'done')
+    return <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#254839] text-[#fdf8ed]"><Check className="h-3.5 w-3.5" /></span>;
+  if (status === 'active')
+    return <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#254839]/[0.10] text-[#254839]"><Loader2 className="h-3.5 w-3.5 animate-spin" /></span>;
+  if (status === 'error')
+    return <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600"><X className="h-3.5 w-3.5" /></span>;
+  return <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#254839]/[0.06] text-[12px] font-semibold text-fg-muted">{n}</span>;
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

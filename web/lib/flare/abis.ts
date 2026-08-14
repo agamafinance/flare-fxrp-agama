@@ -22,3 +22,14 @@ export const ANCHOR_ABI = [
 export const FTSO_ABI = [
   { type: 'function', name: 'xrpUsd1e18', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
 ] as const;
+
+// Confidential YT market (the RFQ seller flow: split FXRP -> PT + YT, then open an RFQ escrowing YT).
+export const SPLITTER_ABI = [
+  { type: 'function', name: 'split', stateMutability: 'nonpayable', inputs: [{ type: 'uint256' }], outputs: [] },
+] as const;
+
+export const RFQ_ABI = [
+  { type: 'function', name: 'openRfq', stateMutability: 'nonpayable', inputs: [{ type: 'uint256' }, { type: 'uint256' }], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'nextId', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'rfqs', stateMutability: 'view', inputs: [{ type: 'uint256' }], outputs: [{ type: 'address' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'bool' }] },
+] as const;

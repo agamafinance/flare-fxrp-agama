@@ -19,7 +19,13 @@ export const ADDR = {
   anchor: '0x8d7AF20B48a42e3D365Dff15ADa569a746E86cfE', // fixed-rate router (previewLock)
   fxrp: '0xb23b0daDa02c86D2A7E76d2060c34Fff14D1E3A6', // demo FXRP (public mint)
   ftso: '0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f', // FtsoReader (XRP/USD)
+  // confidential YT market (the RFQ showcase, long-lived stack)
+  splitter: '0xcB633439CCa82035Dfb0553Caed2552818E3a29E', // FXRP -> PT + YT
+  yt: '0x1592f5cd44676f182162AC9DC09F9B12C68E0B4D', // yield token (variable yield)
+  rfq: '0x73F18087dd45d180e75cADcD383479624326E336', // ConfidentialYtRfq
 } as const;
+
+export const YT_DECIMALS = 6;
 
 export const FLARE_DECIMALS = 6; // FXRP / arFXRP
 export const MAX_UINT = 2n ** 256n - 1n;

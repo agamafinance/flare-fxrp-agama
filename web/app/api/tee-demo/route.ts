@@ -1,8 +1,10 @@
-// Real confidential YT settlement: seller opens an on-chain RFQ, two market makers submit
-// SEALED bids to the live Flare Confidential Compute enclave (GCP Confidential Space, Intel TDX),
-// the enclave picks best execution and signs only the winner, and we relay that enclave-signed
-// settlement on chain where ConfidentialYtRfq verifies the signature against its attested key and
-// settles atomically. Losing / forged quotes never touch the chain.
+// Confidential YT settlement. Two modes:
+//  - demo (no body): our relayer opens the RFQ and both market makers are ours, so anyone can watch
+//    a real on-chain confidential settlement in one click.
+//  - user (body { rfqId }): the connected wallet already split FXRP -> YT and opened its own RFQ; we
+//    only run the market-maker bids + enclave settlement for it, so the premium lands in the user's
+//    wallet. Either way the enclave (GCP Confidential Space, Intel TDX) signs the winner and the
+//    ConfidentialYtRfq contract verifies that signature on chain before settling.
 import { createPublicClient, createWalletClient, http, encodeAbiParameters, keccak256, type Hex } from 'viem';
 import { privateKeyToAccount, sign, generatePrivateKey } from 'viem/accounts';
 import { coston2 } from '@/lib/flare/config';
@@ -20,6 +22,7 @@ const RESERVE = 2n * ONE;
 const rfqAbi = [
   { type: 'function', name: 'openRfq', stateMutability: 'nonpayable', inputs: [{ type: 'uint256' }, { type: 'uint256' }], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'nextId', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'rfqs', stateMutability: 'view', inputs: [{ type: 'uint256' }], outputs: [{ type: 'address' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'bool' }] },
   { type: 'function', name: 'enclaveSigner', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
   {
     type: 'function', name: 'settle', stateMutability: 'nonpayable', outputs: [],
@@ -42,11 +45,15 @@ async function signedQuote(privateKey: Hex, rfq: Hex, rfqId: bigint, claimedMm: 
   return { mm: claimedMm, price: Number(price), deadline: Number(deadline), sig };
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   const env = process.env;
   if (!env.DEMO_PRIVATE_KEY || !env.MM1_KEY || !env.MM2_KEY) {
     return Response.json({ error: 'RFQ settlement not configured (missing enclave/relayer keys)' }, { status: 503 });
   }
+  let body: { rfqId?: number } = {};
+  try { body = await req.json(); } catch { /* no body = demo mode */ }
+  const userRfqId = body?.rfqId;
+
   const ENCLAVE = env.ENCLAVE_URL || 'http://34.59.74.87:8080';
   const RFQ = (env.RFQ_ADDR || '0x73F18087dd45d180e75cADcD383479624326E336') as Hex;
   const post = (rfqId: bigint, quotes: unknown[]) =>
@@ -67,10 +74,22 @@ export async function POST() {
     const onchainSigner = (await pub.readContract({ address: RFQ, abi: rfqAbi, functionName: 'enclaveSigner' })) as string;
     const onchainTrusted = onchainSigner.toLowerCase() === pubkey.toLowerCase();
 
-    // 2. seller opens the RFQ (YT + approval are pre-provisioned, so this is a single tx)
-    const openTx = await wallet.writeContract({ address: RFQ, abi: rfqAbi, functionName: 'openRfq', args: [YT_AMT, RESERVE] });
-    await pub.waitForTransactionReceipt({ hash: openTx });
-    const rfqId = ((await pub.readContract({ address: RFQ, abi: rfqAbi, functionName: 'nextId' })) as bigint) - 1n;
+    // 2. the RFQ to settle: the user's already-open one, or our demo seller opens one
+    let rfqId: bigint;
+    let seller: Hex;
+    let openTx: `0x${string}` | null = null;
+    if (userRfqId != null) {
+      rfqId = BigInt(userRfqId);
+      const info = (await pub.readContract({ address: RFQ, abi: rfqAbi, functionName: 'rfqs', args: [rfqId] })) as readonly [Hex, bigint, bigint, bigint, boolean];
+      seller = info[0];
+      if (!info[4]) return Response.json({ error: 'that RFQ is not open (or already settled)' }, { status: 400 });
+    } else {
+      const otx = await wallet.writeContract({ address: RFQ, abi: rfqAbi, functionName: 'openRfq', args: [YT_AMT, RESERVE] });
+      await pub.waitForTransactionReceipt({ hash: otx });
+      openTx = otx;
+      rfqId = ((await pub.readContract({ address: RFQ, abi: rfqAbi, functionName: 'nextId' })) as bigint) - 1n;
+      seller = demo.address;
+    }
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
 
     // 3. guardrail: a quote forged for another MM is rejected off-chain by the enclave
@@ -92,12 +111,13 @@ export async function POST() {
     // 5. relay the enclave-signed settlement; the contract verifies and settles atomically
     const settleTx = await wallet.writeContract({
       address: RFQ, abi: rfqAbi, functionName: 'settle',
-      args: [[rfqId, demo.address, winner as Hex, BigInt(s.ytAmount), BigInt(s.price), BigInt(s.deadline)], Number(s.v), s.r as Hex, s.s as Hex],
+      args: [[rfqId, seller, winner as Hex, BigInt(s.ytAmount), BigInt(s.price), BigInt(s.deadline)], Number(s.v), s.r as Hex, s.s as Hex],
     });
     await pub.waitForTransactionReceipt({ hash: settleTx });
 
     return Response.json({
-      seller: demo.address,
+      mode: userRfqId != null ? 'user' : 'demo',
+      seller,
       enclave: { address: pubkey, issuer: claims.iss, hwmodel: claims.hwmodel, dbgstat: claims.dbgstat, imageDigest: claims.submods?.container?.image_digest },
       onchainTrusted,
       rfqId: Number(rfqId),
