@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="1290 170 700 740">
+  <defs>
+    <filter id="coinShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+  </defs>
+
+  <!-- XRP (black), top-left, behind -->
+  <circle cx="1518" cy="408" r="182" fill="#000" opacity="0.38" filter="url(#coinShadow)"/>
+  <g transform="translate(1328,208) scale(0.56875)">
+    <circle cx="320" cy="320" r="318" fill="#254839"/>
+    <g fill="#ffffff" transform="translate(130,163) scale(0.742)">
+      <path d="M437,0h74L357,152.48c-55.77,55.19-146.19,55.19-202,0L.94,0H75L192,115.83a91.11,91.11,0,0,0,127.91,0Z"/>
+      <path d="M74.05,424H0L155,270.58c55.77-55.19,146.19-55.19,202,0L512,424H438L320,307.23a91.11,91.11,0,0,0-127.91,0Z"/>
+    </g>
+  </g>
+
+  <!-- FXRP (Flare pink), bottom-right, front -->
+  <circle cx="1728" cy="658" r="202" fill="#000" opacity="0.38" filter="url(#coinShadow)"/>
+  <g transform="translate(1518,438) scale(0.63125)">
+    <circle cx="320" cy="320" r="318" fill="#E62058"/>
+    <g fill="#ffffff" transform="translate(130,163) scale(0.742)">
+      <path d="M437,0h74L357,152.48c-55.77,55.19-146.19,55.19-202,0L.94,0H75L192,115.83a91.11,91.11,0,0,0,127.91,0Z"/>
+      <path d="M74.05,424H0L155,270.58c55.77-55.19,146.19-55.19,202,0L512,424H438L320,307.23a91.11,91.11,0,0,0-127.91,0Z"/>
+    </g>
+  </g>
+</svg>

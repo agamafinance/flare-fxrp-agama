@@ -1,32 +1,24 @@
-import type { Metadata } from "next";
-import { Fraunces, Manrope } from "next/font/google";
-import "./globals.css";
-import { Providers } from "./providers";
+import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
+import './globals.css';
+import { AppFrame } from '@/components/AppFrame';
+import { FlareWalletProvider } from '@/lib/flare/WalletProvider';
 
-const display = Fraunces({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-display",
-  display: "swap",
-});
-const sans = Manrope({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
-  variable: "--font-sans",
-  display: "swap",
-});
+const inter = Inter({ subsets: ['latin'], variable: '--font-sans', display: 'swap' });
 
 export const metadata: Metadata = {
-  title: "Agama · Fixed income for your XRP",
+  title: 'Agama · fixed-rate FXRP on Flare',
   description:
-    "Deposit FXRP, lock a fixed rate the day you deposit, and withdraw more at maturity. No liquidations, a savings pool on Flare with the PT/YT machinery hidden under the hood.",
+    'Lock a fixed rate on your XRP. Deposit FXRP, withdraw anytime at market or 1:1 at maturity. Live on Flare Coston2.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${display.variable} ${sans.variable}`}>
-      <body>
-        <Providers>{children}</Providers>
+    <html lang="en" className={`dark ${inter.variable}`} suppressHydrationWarning>
+      <body className="min-h-screen bg-bg text-fg antialiased" suppressHydrationWarning>
+        <FlareWalletProvider>
+          <AppFrame>{children}</AppFrame>
+        </FlareWalletProvider>
       </body>
     </html>
   );

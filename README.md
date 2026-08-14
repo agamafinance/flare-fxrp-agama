@@ -171,20 +171,33 @@ enclave and settled on chain.
 
 Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can try it).
 
+**Saver stack** (the fixed-rate pool the front's Earn / Portfolio / Faucet use):
+
 | Contract | Address |
 | --- | --- |
-| Anchor | `0x94F3c1D2cB99B0EFa6C07C9d7aCD47f8FBe906E0` |
-| **FixedRateVault** (saver pool, ERC-4626 `arFXRP`) | `0xcEe689fA3fcB23BF7bb62383346C9178B856Fc7D` |
-| FXRP (demo) | `0xb23b0daDa02c86D2A7E76d2060c34Fff14D1E3A6` |
-| MockVault (underlying XRPFi yield) | `0x6dec4d8bfb94eee9228adf330260ab31e0afd2d9` |
+| Anchor (fixed-rate router, `previewLock`) | `0x8d7AF20B48a42e3D365Dff15ADa569a746E86cfE` |
+| **FixedRateVault** (saver pool, ERC-4626 `arFXRP`, 90-day) | `0xFC3af2dC051dA32Bda2017B768E59019Fbf1Ebf8` |
+| PtAmm (YieldSpace) | `0x68f38712E6248AcE62A104DC09EBb1a05De39AeE` |
+| PT | `0xFC00506d7Cd07e86Fa15b2C677c5bdEf151dcA99` |
+| YieldSplitter | `0xE0c7BA6ac71aD2A9E74D90912A5Bf0c6c3008C4f` |
+| FXRP (demo, public `mint()`) | `0xb23b0daDa02c86D2A7E76d2060c34Fff14D1E3A6` |
+
+**Confidential YT market** (the sealed-bid RFQ showcase, Bounty 2):
+
+| Contract | Address |
+| --- | --- |
+| ConfidentialYtRfq (signed quotes + reserve + FTSO band, gated by the live enclave key) | `0x73F18087dd45d180e75cADcD383479624326E336` |
 | YieldSplitter | `0xcB633439CCa82035Dfb0553Caed2552818E3a29E` |
 | PT | `0x7779771976CF16a8EF522E03158620d4dAA516c1` |
 | YT | `0x1592f5cd44676f182162AC9DC09F9B12C68E0B4D` |
-| PtAmm | `0x818DE98267f844fCa9543aAd6f00bca14a3206d0` |
-| ConfidentialYtRfq (signed quotes + reserve + FTSO band, gated by the live enclave key) | `0x73F18087dd45d180e75cADcD383479624326E336` |
 | ConfidentialSpaceRegistry (real Google token, production TDX claims + exact eat_nonce verified on chain) | `0x6198FA295a9871b9D41380355d7799df6CB455F2` |
 | Live enclave (GCP Confidential Space, **production** Intel TDX) | key `0x06854aA1291CbbDeA01Bc067A01bec73760FF1A8`, image `sha256:8c1ae4d4…0da136` |
-| FtsoReader | `0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f` |
+
+**Shared / Flare integration:**
+
+| Contract | Address |
+| --- | --- |
+| FtsoReader (XRP/USD) | `0x46c8E98A9Dce3A3327C36fAF69c899F8288e353f` |
 | FTestXRP (real FAsset, minted from native XRP) | `0x0b6A3645c240605887a5532109323A3E12273dc7` |
 | XrpOnRamp (FDC proof releases FXRP + locks, recipient bound to the XRP memo) | `0xd1DABE758Ede40eb7831343E8395dF4ddbC4E55A` |
 
@@ -202,14 +215,24 @@ forge test              # 44/44, plus a live Flare fork test
 forge test -vv          # with the logged numbers
 ```
 
-Front (browser dApp, viem):
+Front (the `app.agama.finance/flare` UI, Next.js + viem):
+
+```bash
+cd web && pnpm install && pnpm dev    # http://localhost:3005
+```
+
+Connect an injected wallet on Flare Coston2, mint demo FXRP on **Faucet**, lock a fixed rate on
+**Earn** (withdraw anytime at market or 1:1 at maturity), and open the sealed-bid **RFQ**. It talks
+to the live Coston2 saver stack above.
+
+A lightweight self-contained option (`frontend/app.html`, viem in a single file) also runs against a
+local anvil:
 
 ```bash
 ./run-local.sh          # anvil + deploy + serve, then open http://127.0.0.1:8547/app.html
 ```
 
-Or open `frontend/app.html` against Coston2 directly with a wallet. Deploy your own:
-see [`DEPLOY.md`](./DEPLOY.md).
+Deploy your own: see [`DEPLOY.md`](./DEPLOY.md).
 
 ## Notes
 
