@@ -115,6 +115,34 @@ Space VM (AMD SEV). Confirm what actually came up before registering it:
 
 Full lifecycle and the platform traps: [`docs/deployment-steps.md`](docs/deployment-steps.md).
 
+## Deployed on Coston2
+
+| | |
+|---|---|
+| `AgamaRfqInstructionSender` | [`0x1AEffa8EcCa1AC5763D138d25575230690E9fE87`](https://coston2-explorer.flare.network/address/0x1AEffa8EcCa1AC5763D138d25575230690E9fE87) |
+| Extension id (assigned by `TeeExtensionRegistry`) | `0x102f7` — **66295** |
+| TEE machine | `0x32a40982e50b4E871166626472904ceF713A6d85` |
+| Attested identity | `GCP_AMD_SEV`, `dbgstat: disabled-since-boot`, `MODE=0` |
+| Code hash (whitelisted on chain) | `0x9f27d48efbbb70ae5593b72aff51c7ba39ced995614c5ed491112d5baf46ec28` |
+| Traded pair | FXRP `0xb23b0daDa…1E3A6` · YT `0x1592f5cd4…E0B4D` |
+
+Verify the registration yourself:
+
+```bash
+cast call 0x1a9C4A0f9D76c0b1D91d22E24E573a9b377618aE \
+  'getTeeExtensionInstructionsSender(uint256)(address)' 66295 \
+  --rpc-url https://coston2-api.flare.network/ext/C/rpc
+```
+
+**Not yet promoted to production.** `register-tee`'s last step needs an FTDC availability
+proof: the request goes on chain, policy consistency checks out (signing policy 5941 = reward
+epoch 5941), Flare's FTDC proxy is alive with a fresh timestamp and its own TEE machine
+(`0xC869a5db…57C5`) is registered at that URL — but the proof never appears on
+`/action/result/<id>`, on any submission tag, including with a six-minute poll window. So
+`getActiveTeeMachines(66295)` is still empty. Everything on this side is ruled out: the proxy is
+publicly reachable over HTTPS, the on-chain machine record points at it, and `/info` serves the
+real attestation from outside. It is a question for Flare, not a bug here.
+
 ## Known limitations
 
 - **Confidential Space has no durable storage**, so a relaunch mints a new TEE machine and a new
@@ -130,5 +158,6 @@ Full lifecycle and the platform traps: [`docs/deployment-steps.md`](docs/deploym
   `DirectInstruction` envelope, where the payload sits under `message` rather than `originalMessage`;
   the scaffold's `base/server.py` parsed it as a `DataFixed`, which succeeds and yields an empty
   payload. Fixed here (`parse_direct_instruction`) and pinned by tests — worth upstreaming.
+- **Registration stops at the availability proof** (see above) — an FTDC dependency, not a code path.
 - **`teeAddress` is owner-set.** It should match a machine registered for this extension; the minimal
   registry interface cannot enumerate them, so the binding is checked by hand at deploy time.
