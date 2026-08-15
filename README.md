@@ -136,6 +136,21 @@ It prints the live node's view beside the `FlareTeeManager` record — machine i
 platform, code hash, instruction sender — and the machine status (2 = production). When
 registration stalls, it says in one screen whether the fault is here or upstream.
 
+**The trap that cost the most: a self-hosted indexer pins the proxy to a stale signing policy.**
+With `history_epochs = 0` the indexer keeps ~15 minutes of blocks, and history drop deletes each new
+reward epoch's signing-policy events before the proxy has read them. The proxy then stays on the
+epoch it booted with — ours sat at 5940 while the chain was at 5942 — and the FTDC availability
+check never resolves, because nobody verifies a machine whose proxy is on a stale policy. Nothing
+says so: `register-tee`'s pre-flight checks *Flare's* proxy policy, never yours. Compare them:
+
+```bash
+curl -s "$EXT_PROXY_URL/info"                  | jq .teeInfo.lastSigningPolicyId
+curl -s https://tee-proxy-coston2-1.flare.rocks/info | jq .teeInfo.lastSigningPolicyId
+```
+
+`config/indexer/config.coston2.toml` now keeps two epochs, which is what the proxy's
+`initial_signing_policy_offset = 2` actually needs.
+
 **Not yet promoted to production.** `register-tee`'s last step needs an FTDC availability
 proof: the request goes on chain, policy consistency checks out (signing policy 5941 = reward
 epoch 5941), Flare's FTDC proxy is alive with a fresh timestamp and its own TEE machine

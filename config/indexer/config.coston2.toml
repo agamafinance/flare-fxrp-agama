@@ -4,14 +4,18 @@
 # voting rounds — to verify what Flare's data providers send it. Flare issues
 # credentials to a hosted indexer on request; this config runs our own instead,
 # so the deployment has no dependency on someone else's database.
-#
-# FSP mode with history_epochs = 0 indexes only the last ~15 minutes of blocks
-# and backfills FSP metadata from two reward epochs back, so a cold start is
-# minutes rather than a full chain sync.
 
 [indexer]
 mode = "fsp"
-history_epochs = 0
+
+# NOT 0. With 0 the indexer keeps only ~15 minutes of blocks, and history drop then
+# deletes the signing-policy events of each new reward epoch before the proxy has
+# read them: the proxy stays pinned to the epoch it started on while the chain moves
+# on, and the FTDC availability check never resolves — nobody verifies a machine
+# whose proxy sits on a stale policy. Two epochs is what the proxy's
+# initial_signing_policy_offset = 2 actually needs.
+history_epochs = 2
+
 rpc_concurrency = 20      # a shared third-party endpoint: back off before it does
 batch_size = 1000
 log_range = 1000          # must match the endpoint's eth_getLogs cap: a wider range is
@@ -26,9 +30,7 @@ level = "INFO"
 console = true
 
 [chain]
-# Flare's public RPC caps eth_getLogs at 30 blocks, which turns the FSP backfill
-# into ~17k requests. This endpoint serves 1000-block ranges, so the same backfill
-# is ~500. Only the indexer uses it; the enclave's own reads stay on Flare's RPC.
+# Only the indexer uses this endpoint; the enclave's own reads stay on Flare's RPC.
 node_url = "https://rpc.ankr.com/flare_coston2"
 chain_type = 1            # Avalanche-based
 
