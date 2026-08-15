@@ -49,6 +49,11 @@ IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/agama-fce-extension"
 support_ip() { gcloud compute instances describe "$SUPPORT_VM" --zone="$ZONE" --format='value(networkInterfaces[0].networkIP)' 2>/dev/null; }
 support_public_ip() { gcloud compute instances describe "$SUPPORT_VM" --zone="$ZONE" --format='value(networkInterfaces[0].accessConfigs[0].natIP)' 2>/dev/null; }
 
+TEE_ZONE_FILE="$PROJECT_DIR/config/tee-vm.env"
+# shellcheck source=/dev/null
+[[ -f "$TEE_ZONE_FILE" ]] && source "$TEE_ZONE_FILE"
+TEE_ZONE="${TEE_ZONE:-$ZONE}"
+
 case "${1:-}" in
     --info)
         ip="$(support_public_ip)" || die "no support VM"
@@ -57,10 +62,13 @@ case "${1:-}" in
             || die "the proxy did not answer — check: gcloud compute ssh $SUPPORT_VM --zone=$ZONE --command 'docker logs agama-fce-ext-proxy-1'"
         exit 0 ;;
     --destroy)
-        gcloud compute instances delete "$TEE_VM" "$SUPPORT_VM" --zone="$ZONE" --quiet
+        gcloud compute instances delete "$TEE_VM" --zone="$TEE_ZONE" --quiet 2>/dev/null || true
+        gcloud compute instances delete "$SUPPORT_VM" --zone="$ZONE" --quiet
         exit 0 ;;
+    --tee-only) TEE_ONLY=true ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
 esac
+TEE_ONLY="${TEE_ONLY:-false}"
 
 [[ -f "$PROJECT_DIR/config/extension.env" ]] \
     || die "config/extension.env is missing — run ./scripts/pre-build.sh first (it needs a funded key)"
@@ -75,67 +83,83 @@ gcloud services enable confidentialcomputing.googleapis.com compute.googleapis.c
 # attestation service; without workloadUser the launcher gets no token.
 SA="$(gcloud iam service-accounts list --format='value(email)' --filter='displayName~Compute' | head -1)"
 [[ -n "$SA" ]] || die "no compute service account found"
-for role in artifactregistry.reader logging.logWriter confidentialcomputing.workloadUser; do
+for role in artifactregistry.reader artifactregistry.writer logging.logWriter confidentialcomputing.workloadUser; do
     gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$SA" --role="roles/$role" >/dev/null
 done
 
-step "Build and push the extension image (MODE=0, real attestation)"
+if [[ "$TEE_ONLY" == "false" ]]; then
+step "Support VM: build host, redis, proxy, indexer"
 gcloud artifacts repositories create "$REPO" --repository-format=docker --location="$REGION" 2>/dev/null || true
-gcloud auth configure-docker "$REGION-docker.pkg.dev" -q >/dev/null
 
-# The base image carries the tee-node binary the Python image copies in.
-"$SCRIPT_DIR/build-node-base.sh"
-
-# MODE=0 is baked here rather than overridden at launch, so the code hash on chain
-# belongs to an image that can only run production attestation.
-SOURCE_DATE_EPOCH="$(git -C "$PROJECT_DIR" log -1 --format=%ct)"
-TEE_NODE_REF="$(bash -c "source '$SCRIPT_DIR/lib/versions.sh'; load_versions '$PROJECT_DIR'; echo \$TEE_NODE_REF")"
-docker build --platform linux/amd64 \
-    -f "$PROJECT_DIR/python/Dockerfile" \
-    --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
-    --build-arg TEE_NODE_REF="$TEE_NODE_REF" \
-    -t "$IMAGE:latest" "$PROJECT_DIR"
-docker push "$IMAGE:latest"
-DIGEST="$(gcloud artifacts docker images describe "$IMAGE:latest" --format='value(image_summary.digest)')"
-log "image digest (this is what gets attested): $DIGEST"
-
-step "Support VM: redis, proxy, indexer"
 if ! gcloud compute instances describe "$SUPPORT_VM" --zone="$ZONE" >/dev/null 2>&1; then
     gcloud compute instances create "$SUPPORT_VM" \
-        --zone="$ZONE" --machine-type=e2-standard-2 \
-        --image-family=ubuntu-2404-lts --image-project=ubuntu-os-cloud \
-        --boot-disk-size=50GB --tags=agama-fce \
+        --zone="$ZONE" --machine-type=e2-standard-4 \
+        --image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud \
+        --boot-disk-size=80GB --tags=agama-fce \
+        --scopes=cloud-platform \
         --metadata=startup-script='#!/bin/bash
 set -e
 apt-get update
-apt-get install -y docker.io docker-compose-v2 git jq
-usermod -aG docker $(ls /home | head -1) || true
+apt-get install -y docker.io docker-compose-v2 docker-buildx git jq
 systemctl enable --now docker'
     log "waiting for docker on the support VM"
     for _ in $(seq 1 40); do
-        gcloud compute ssh "$SUPPORT_VM" --zone="$ZONE" --command 'docker info >/dev/null 2>&1' >/dev/null 2>&1 && break
+        gcloud compute ssh "$SUPPORT_VM" --zone="$ZONE" --quiet --command 'sudo docker info >/dev/null 2>&1' >/dev/null 2>&1 && break
         sleep 15
     done
 fi
 
-# Ship the compose stack and its config. The extension itself is NOT started here —
-# it only ever runs inside the TEE.
+# The whole stack goes up, because this VM also BUILDS the extension image. The
+# Confidential Space VM is x86; cross-building it on an arm64 laptop means running
+# the entire Go toolchain under QEMU. Building where the architecture is native is
+# both faster and closer to what an auditor would reproduce.
 log "copying the stack to $SUPPORT_VM"
 TARBALL="$(mktemp -t agama-fce-XXXX).tar.gz"
 tar -czf "$TARBALL" -C "$PROJECT_DIR" \
-    --exclude='.git' --exclude='python/.venv' --exclude='.indexer-src' --exclude='out' --exclude='lib' \
+    --exclude='.git' --exclude='.indexer-src' --exclude='python/.venv' \
     docker-compose.yaml docker-compose.coston2.yaml docker-compose.indexer.yaml \
-    config scripts proxy python tools foundry.toml .env
-gcloud compute scp "$TARBALL" "$SUPPORT_VM:~/stack.tar.gz" --zone="$ZONE"
+    config scripts proxy python docker .env
+gcloud compute scp "$TARBALL" "$SUPPORT_VM:~/stack.tar.gz" --zone="$ZONE" --quiet
 rm -f "$TARBALL"
 
-gcloud compute ssh "$SUPPORT_VM" --zone="$ZONE" --command '
+SOURCE_DATE_EPOCH="$(git -C "$PROJECT_DIR" log -1 --format=%ct)"
+TEE_NODE_REF="$(bash -c "source '$SCRIPT_DIR/lib/versions.sh'; load_versions '$PROJECT_DIR'; echo \$TEE_NODE_REF")"
+
+# sudo throughout: the login user's docker group membership does not apply to an
+# already-authenticated ssh session.
+log "building the extension image on the VM and pushing it (this takes a few minutes)"
+gcloud compute ssh "$SUPPORT_VM" --zone="$ZONE" --quiet --command "
 set -e
 mkdir -p ~/agama-fce && tar -xzf ~/stack.tar.gz -C ~/agama-fce
 cd ~/agama-fce
-./scripts/start-indexer.sh
-docker compose -p agama-fce -f docker-compose.yaml -f docker-compose.coston2.yaml up -d redis ext-proxy
-'
+
+# Artifact Registry auth without gcloud: the VM's own metadata token.
+TOKEN=\$(curl -s -H 'Metadata-Flavor: Google' \
+  http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token | jq -r .access_token)
+echo \"\$TOKEN\" | sudo docker login -u oauth2accesstoken --password-stdin https://$REGION-docker.pkg.dev
+
+# Ubuntu's docker.io defaults to the classic builder, which does not understand
+# the --mount cache directives these Dockerfiles use for reproducible apt/pip.
+sudo apt-get install -y docker-buildx >/dev/null 2>&1 || true
+export DOCKER_BUILDKIT=1
+sudo -E docker build -f docker/node-base.Dockerfile \
+  --build-arg TEE_NODE_REF=$TEE_NODE_REF --build-arg SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH \
+  -t local/tee-node-base:$TEE_NODE_REF docker/
+sudo -E docker build -f python/Dockerfile \
+  --build-arg TEE_NODE_REF=$TEE_NODE_REF --build-arg SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH \
+  -t $IMAGE:latest .
+sudo docker push $IMAGE:latest
+
+sudo -E docker build -f proxy/Dockerfile -t local/tee-proxy proxy
+sudo ./scripts/start-indexer.sh
+sudo docker compose -p agama-fce -f docker-compose.yaml -f docker-compose.coston2.yaml up -d redis ext-proxy
+"
+
+fi
+
+DIGEST="$(gcloud artifacts docker images describe "$IMAGE:latest" --format='value(image_summary.digest)')"
+[[ -n "$DIGEST" ]] || die "no image in $IMAGE — run without --tee-only first"
+log "image digest (this is what gets attested): $DIGEST"
 
 gcloud compute firewall-rules create agama-fce-proxy \
     --allow=tcp:6664 --source-ranges=0.0.0.0/0 --target-tags=agama-fce 2>/dev/null || true
@@ -154,12 +178,32 @@ if gcloud compute instances describe "$TEE_VM" --zone="$ZONE" >/dev/null 2>&1; t
     log "deleting the previous TEE VM (a relaunch mints a new teeId anyway)"
     gcloud compute instances delete "$TEE_VM" --zone="$ZONE" --quiet
 fi
-gcloud compute instances create "$TEE_VM" \
-    --zone="$ZONE" --machine-type=n2d-standard-2 \
-    --confidential-compute-type=SEV --maintenance-policy=TERMINATE --shielded-secure-boot \
-    --image-family=confidential-space --image-project=confidential-space-images \
-    --scopes=cloud-platform --tags=agama-fce \
-    --metadata="^~^tee-image-reference=$IMAGE@$DIGEST~tee-container-log-redirect=true~tee-env-MODE=0~tee-env-CHAIN_URL=${CHAIN_URL:-https://coston2-api.flare.network/ext/C/rpc}~tee-env-EXTENSION_ID=$EXTENSION_ID~tee-env-INITIAL_OWNER=$INITIAL_OWNER~tee-env-PROXY_URL=http://$SUPPORT_INTERNAL:6663"
+
+# Confidential VM shapes run out. The support VM is reachable on the internal
+# network across every zone of its region, so falling back to another zone costs
+# nothing — the TEE only has to reach $SUPPORT_INTERNAL:6663.
+TEE_ZONES="${TEE_ZONES:-$ZONE us-central1-b us-central1-c us-central1-f}"
+TEE_TYPES="${TEE_TYPES:-n2d-standard-2 n2d-standard-4 n2d-standard-8}"
+TEE_ZONE=""
+for zone in $TEE_ZONES; do
+    for mtype in $TEE_TYPES; do
+        log "trying $mtype in $zone"
+        if gcloud compute instances create "$TEE_VM" \
+            --zone="$zone" --machine-type="$mtype" \
+            --confidential-compute-type=SEV --maintenance-policy=TERMINATE --shielded-secure-boot \
+            --image-family=confidential-space --image-project=confidential-space-images \
+            --scopes=cloud-platform --tags=agama-fce \
+            --metadata="^~^tee-image-reference=$IMAGE@$DIGEST~tee-container-log-redirect=true~tee-env-MODE=0~tee-env-CHAIN_URL=${CHAIN_URL:-https://coston2-api.flare.network/ext/C/rpc}~tee-env-EXTENSION_ID=$EXTENSION_ID~tee-env-INITIAL_OWNER=$INITIAL_OWNER~tee-env-PROXY_URL=http://$SUPPORT_INTERNAL:6663" 2>&1 | tail -3; then
+            TEE_ZONE="$zone"
+            break 2
+        fi
+    done
+done
+[[ -n "$TEE_ZONE" ]] || die "no zone in [$TEE_ZONES] had capacity for [$TEE_TYPES] — try again later or set TEE_ZONES"
+
+# Remember where it landed: --info and --destroy need the zone, and it is not $ZONE.
+printf 'TEE_ZONE=%s\n' "$TEE_ZONE" > "$PROJECT_DIR/config/tee-vm.env"
+log "TEE VM up in $TEE_ZONE"
 
 cat <<EOF
 

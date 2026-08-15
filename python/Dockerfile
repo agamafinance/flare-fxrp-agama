@@ -86,6 +86,13 @@ USER 0:0
 # silently rejects operator env overrides at attestation time.
 LABEL "tee.launch_policy.allow_env_override"="LOG_LEVEL,PROXY_URL,INITIAL_OWNER,EXTENSION_ID,CHAIN_URL,MODE,CONFIG_PORT,SIGN_PORT,EXTENSION_PORT"
 
+# Without this, a production Confidential Space image refuses
+# tee-container-log-redirect and shuts the VM down before the workload starts
+# ("logging redirection only allowed on debug environment by image"). Opting in
+# here is what makes the enclave debuggable on the production image — the workload
+# prints counts and errors, never a quote.
+LABEL "tee.launch_policy.log_redirect"="always"
+
 EXPOSE 5501 7701 7702
 
 # Two-process layout: tee-node ./server handles config/sign and forwards actions
