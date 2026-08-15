@@ -136,6 +136,15 @@ It prints the live node's view beside the `FlareTeeManager` record — machine i
 platform, code hash, instruction sender — and the machine status (2 = production). When
 registration stalls, it says in one screen whether the fault is here or upstream.
 
+**Honest status of the self-hosted indexer.** Its FSP event backfill is fast and reliable — two
+reward epochs of signing policies, voter registrations and reward offers land in about three
+seconds. Its *block* catch-up is not: across several clean runs it indexed one range of ~17k blocks
+successfully and then, on every subsequent attempt, sat at 0 rows with the process idle (no CPU, no
+network, no error line) while the proxy refused to serve on `Database out of sync`. Concurrency,
+the RPC endpoint and a wiped volume made no difference. Until that is understood, the pragmatic
+route to a promoted machine is to ask Flare for credentials to their hosted indexer — the
+documented path — and keep this one for the FSP data it does deliver well.
+
 **The trap that cost the most: a self-hosted indexer pins the proxy to a stale signing policy.**
 With `history_epochs = 0` the indexer keeps ~15 minutes of blocks, and history drop deletes each new
 reward epoch's signing-policy events before the proxy has read them. The proxy then stays on the

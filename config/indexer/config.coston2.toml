@@ -14,14 +14,19 @@ mode = "fsp"
 # on, and the FTDC availability check never resolves — nobody verifies a machine
 # whose proxy sits on a stale policy. Two epochs is what the proxy's
 # initial_signing_policy_offset = 2 actually needs.
-history_epochs = 2
+history_epochs = 1
 
-rpc_concurrency = 20      # a shared third-party endpoint: back off before it does
+# 20, not more. At 40 the block catch-up went silent — no CPU, no network, no rows —
+# while the FSP event backfill still completed in seconds. Whatever the cause, this is
+# the value that demonstrably indexes.
+rpc_concurrency = 20
 batch_size = 1000
-log_range = 1000          # must match the endpoint's eth_getLogs cap: a wider range is
-                          # rejected outright and the indexer retries it silently, so the
-                          # backfill simply never advances. Flare's own public RPC caps
-                          # this at 30 blocks, which makes a cold start take hours.
+# Must match the endpoint's eth_getLogs cap: a wider range is rejected outright and
+# the indexer retries it silently, so the backfill never advances. Flare's own public
+# RPC caps this at 30. That makes the initial FSP backfill slow, but block catch-up —
+# which is what dominates once the backfill is done — is far faster here than against
+# a rate-limited third party, where it simply stalls.
+log_range = 1000
 new_block_check_millis = 1000
 confirmations = 1
 
