@@ -114,7 +114,10 @@ func main() {
 		// go missing from the auction.
 		quoteResp, err := fccutils.ActionResult(*pf, actionID)
 		if err != nil {
-			fccutils.FatalWithCause(errors.Errorf("polling the %d quote: %s", price, err))
+			// A rejected quote leaves no stored result, so the poll 404s. The reason
+			// stays inside the enclave — it is in the extension's log, not here.
+			fccutils.FatalWithCause(errors.Errorf(
+				"no result for the %d quote (%s) — the enclave likely rejected it; check the extension log", price, err))
 		}
 		if quoteResp.Result.Status != 1 {
 			fccutils.FatalWithCause(errors.Errorf("the enclave rejected the %d quote: %s", price, quoteResp.Result.Log))
