@@ -160,6 +160,8 @@ def handle_settle(msg: str) -> tuple[Optional[str], int, Optional[str]]:
     try:
         seller, yt_amount, min_price, _settle_by, is_open = chain.read_rfq(contract_addr, rfq_id)
         if not is_open:
+            # Settled or cancelled on chain: the quotes can never be used again.
+            quotes.drop(contract_addr, rfq_id)
             return None, 0, "rfq not open"
         fxrp = chain.read_fxrp(contract_addr)
     except chain.ChainError as e:
@@ -191,7 +193,10 @@ def handle_settle(msg: str) -> tuple[Optional[str], int, Optional[str]]:
         price=winner.price,
         deadline=winner.deadline,
     )
-    quotes.drop(contract_addr, rfq_id)
+    # The book is NOT dropped here. Signing a settlement does not settle anything:
+    # the relayer may never submit it, or the transaction may revert, and the RFQ
+    # would then be stuck with an enclave that has forgotten every quote. It is
+    # dropped when the RFQ is next seen closed on chain.
     _settlements_signed += 1
     logger.info(
         "settlement signed for rfq %s#%d: %d candidates, premium %d (USD 6dp %d)",

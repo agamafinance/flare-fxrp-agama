@@ -92,8 +92,22 @@ class TestSettle:
         # the losing quote is nowhere in the output
         assert addr(MM1) not in data.lower()
 
-    def test_settlement_clears_the_book(self):
+    def test_signing_does_not_clear_the_book(self):
+        # A signed settlement is not a settled one: if the relayer never submits it,
+        # the RFQ must still be settleable on a second attempt.
         handlers.handle_quote(quote_msg(signed_quote(MM1, 6_000_000)))
+        handlers.handle_settle(settle_msg())
+        assert len(quotes.quotes_for(RFQ, 1)) == 1
+
+        data, status, err = handlers.handle_settle(settle_msg())
+        assert (status, err) == (1, None)
+        assert decode_settlement(data)[3].lower() == addr(MM1)
+
+    def test_a_closed_rfq_drops_the_book(self, monkeypatch):
+        handlers.handle_quote(quote_msg(signed_quote(MM1, 6_000_000)))
+        monkeypatch.setattr(
+            chain, "read_rfq", lambda _r, _i: (addr(SELLER), YT_AMOUNT, MIN_PRICE, NOW + 900, False)
+        )
         handlers.handle_settle(settle_msg())
         assert quotes.quotes_for(RFQ, 1) == []
 
