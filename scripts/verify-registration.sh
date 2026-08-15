@@ -63,7 +63,7 @@ RECORD_L=$(printf '%s' "$RECORD" | lower)
   || bad "url mismatch — chain says '$CHAIN_URL_REC', proxy is '$PROXY' (fix: ./scripts/update-tee-url.sh)"
 [[ "$LIVE_PLATFORM" == "GCP_AMD_SEV" ]] \
   && ok "attested on real hardware ($LIVE_PLATFORM)" \
-  || warn "platform is $LIVE_PLATFORM — simulated attestation, FTDC will reject it"
+  || warn "platform is $LIVE_PLATFORM — simulated attestation (which FTDC does accept: it promotes machines running it)"
 [[ "$LIVE_CODEHASH" == "0x194844cf417dde867073e5ab7199fa4d21fd82b5dbe2bdea8b3d7fc18d10fdc2" ]] \
   && warn "code hash is the simulated one" \
   || ok "code hash measured: $LIVE_CODEHASH"

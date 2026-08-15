@@ -70,10 +70,14 @@ RUN if [ "${SOURCE_DATE_EPOCH:-0}" -gt 0 ] 2>/dev/null; then find /app -exec tou
 
 # Ports and mode match go/Dockerfile so compose works uniformly across languages.
 #
-# MODE=1 is SIMULATED attestation (local dev); MODE=0 is production attestation.
-# For a real Confidential Space deploy this MUST be 0 — FTDC rejects simulated
-# attestation. See docs/deployment-steps.md §5.
-ENV MODE=1 CONFIG_PORT=5501 SIGN_PORT=7701 EXTENSION_PORT=7702
+# MODE=0 is production attestation; MODE=1 is simulated. The image ships 0 and
+# MODE is deliberately ABSENT from the launch-policy label below, so a Confidential
+# Space VM can never be flipped to simulated attestation at workload launch — the
+# operator cannot weaken what the enclave attests to. Local development is
+# unaffected: docker-compose supplies MODE=${MODE:-1}, and compose env is not
+# governed by the launch policy. A bare `docker run` against a devnet needs an
+# explicit -e MODE=1.
+ENV MODE=0 CONFIG_PORT=5501 SIGN_PORT=7701 EXTENSION_PORT=7702
 # Unbuffered stdout so container logs appear promptly.
 ENV PYTHONUNBUFFERED=1
 # Keep .pyc out of the image; they would vary by build host.
@@ -91,7 +95,7 @@ USER 0:0
 # set-governance registers on chain. Neither can be supplied at launch unless the
 # image whitelists it here, so on a real Confidential Space VM the scaffold's list
 # is not enough.
-LABEL "tee.launch_policy.allow_env_override"="LOG_LEVEL,PROXY_URL,INITIAL_OWNER,EXTENSION_ID,CHAIN_URL,CHAIN_ID,MODE,CONFIG_PORT,SIGN_PORT,EXTENSION_PORT,GOVERNANCE_SIGNERS,GOVERNANCE_THRESHOLD"
+LABEL "tee.launch_policy.allow_env_override"="LOG_LEVEL,PROXY_URL,INITIAL_OWNER,EXTENSION_ID,CHAIN_URL,CHAIN_ID,CONFIG_PORT,SIGN_PORT,EXTENSION_PORT,GOVERNANCE_SIGNERS,GOVERNANCE_THRESHOLD"
 
 # Without this, a production Confidential Space image refuses
 # tee-container-log-redirect and shuts the VM down before the workload starts
