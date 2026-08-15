@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
@@ -112,15 +113,18 @@ func main() {
 		// The proxy accepts the action before the enclave has judged the quote, so
 		// poll the result: a quote the enclave rejects must fail here, not silently
 		// go missing from the auction.
-		quoteResp, err := fccutils.ActionResult(*pf, actionID)
+		status, log, err := directResult(*pf, actionID)
 		if err != nil {
-			// A rejected quote leaves no stored result, so the poll 404s. The reason
-			// stays inside the enclave — it is in the extension's log, not here.
+			// Two things produce no stored result: a quote the enclave refused (its
+			// reason stays inside the enclave, in the extension log), and a TEE the
+			// proxy will not publish for — "invalid teeID" until post-build.sh has
+			// registered this machine on chain.
 			fccutils.FatalWithCause(errors.Errorf(
-				"no result for the %d quote (%s) — the enclave likely rejected it; check the extension log", price, err))
+				"no result for the %d quote (%s) — either the enclave rejected it (see the extension log) "+
+					"or this TEE is not registered yet (run post-build.sh)", price, err))
 		}
-		if quoteResp.Result.Status != 1 {
-			fccutils.FatalWithCause(errors.Errorf("the enclave rejected the %d quote: %s", price, quoteResp.Result.Log))
+		if status != 1 {
+			fccutils.FatalWithCause(errors.Errorf("the enclave rejected the %d quote: %s", price, log))
 		}
 		logger.Infof("Quote %d accepted by the enclave (never touched the chain)", price)
 	}
@@ -168,6 +172,38 @@ func main() {
 	logger.Infof("Settled on chain: %s", txHash.Hex())
 	logger.Infof("FXRP %s paid the seller; the losing quote never left the enclave.", fxrp.Hex())
 	logger.Infof("All tests passed.")
+}
+
+// directResult polls a direct action's result. Direct actions are tagged "submit"
+// while /action/result defaults to "threshold", so the tag has to be explicit or
+// every lookup 404s on an action that completed fine.
+func directResult(proxyURL string, actionID common.Hash) (uint8, string, error) {
+	url := fmt.Sprintf("%s/action/result/%s?submissionTag=submit", strings.TrimRight(proxyURL, "/"), actionID.Hex())
+	var lastErr error
+	for range 15 {
+		resp, err := http.Get(url)
+		if err != nil {
+			lastErr = err
+		} else {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				var parsed struct {
+					Result struct {
+						Status uint8  `json:"status"`
+						Log    string `json:"log"`
+					} `json:"result"`
+				}
+				if err := json.Unmarshal(body, &parsed); err != nil {
+					return 0, "", errors.Errorf("decoding the result: %s", err)
+				}
+				return parsed.Result.Status, parsed.Result.Log, nil
+			}
+			lastErr = errors.Errorf("proxy returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return 0, "", lastErr
 }
 
 // submitQuote signs a quote the way a market maker does and posts it to the
