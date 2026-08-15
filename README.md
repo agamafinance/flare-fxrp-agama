@@ -102,8 +102,9 @@ cp .env.example .env            # keys, FXRP_ADDR / YT_ADDR
 ./scripts/test.sh               # full sealed-bid round trip
 ```
 
-That local run uses simulated attestation, which is enough to exercise the whole pipeline but
-**FTDC rejects it**, so machine registration needs real hardware. `scripts/deploy-gcp.sh` does that
+That local run uses simulated attestation. Contrary to the scaffold's docs, FTDC accepts it —
+Coston2's `getSystemSupportedPlatforms()` lists `TEST_PLATFORM`, and several extensions run machines
+at PRODUCTION on it. Real attestation is a stronger claim, not an entry requirement. `scripts/deploy-gcp.sh` does that
 in one shot: it builds the image with `MODE=0`, pushes it by digest, puts redis, the proxy and the
 indexer on an ordinary VM, and runs the extension — and only the extension — on a GCP Confidential
 Space VM (AMD SEV). Confirm what actually came up before registering it:

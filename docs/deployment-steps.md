@@ -107,7 +107,13 @@ The image built is selected by `LANGUAGE` in `.env` — `go/Dockerfile`, `python
 
 **Every language's Dockerfile deliberately ships `MODE=1`**, so a bare `docker run` and the compose stack both work against the local devnet without extra configuration. `docker-compose.yaml` reinforces this with `MODE=${MODE:-1}`.
 
-**FTDC rejects simulated attestation**, so a production deploy must run with `MODE=0`. You have two options, and the second is preferred:
+**FTDC does *not* reject simulated attestation** — this is worth correcting, because the claim sends
+people to Confidential Space before they need it. On Coston2, `getSystemSupportedPlatforms()` returns
+`TEST_PLATFORM` alongside the three GCP ones, and extensions 66280 and 66281 — the latter a Flare
+Foundation operational deployment — both run three machines at PRODUCTION with
+`platform TEST_PLATFORM`, `attestation magic_pass` and the simulated code hash `0x194844cf…`. Real
+attestation is a stronger claim, not an admission requirement. Deploy with `MODE=0` because you want
+the enclave to prove what it runs, not because FTDC forces it. You have two options, and the second is preferred:
 
 1. Edit `ENV MODE=1` → `ENV MODE=0` in your `<LANGUAGE>/Dockerfile` before building the release image.
 2. **Leave the image as-is and override at workload launch.** The `tee.launch_policy.allow_env_override` label lists `MODE`, so the Confidential Space VM accepts an override — and without that label it would reject one. This keeps a single image usable for both local dev and production, and keeps the code hash independent of which environment it is destined for.
