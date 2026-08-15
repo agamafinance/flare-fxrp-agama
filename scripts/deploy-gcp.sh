@@ -196,7 +196,7 @@ for zone in $TEE_ZONES; do
             --confidential-compute-type=SEV --maintenance-policy=TERMINATE --shielded-secure-boot \
             --image-family=confidential-space --image-project=confidential-space-images \
             --scopes=cloud-platform --tags=agama-fce \
-            --metadata="^~^tee-image-reference=$IMAGE@$DIGEST~tee-container-log-redirect=true~tee-env-MODE=0~tee-env-CHAIN_URL=${CHAIN_URL:-https://coston2-api.flare.network/ext/C/rpc}~tee-env-EXTENSION_ID=$EXTENSION_ID~tee-env-INITIAL_OWNER=$INITIAL_OWNER~tee-env-PROXY_URL=http://$SUPPORT_INTERNAL:6673" 2>&1 | tail -3; then
+            --metadata="^~^tee-image-reference=$IMAGE@$DIGEST~tee-container-log-redirect=true~tee-env-MODE=0~tee-env-CHAIN_URL=${CHAIN_URL:-https://coston2-api.flare.network/ext/C/rpc}~tee-env-EXTENSION_ID=$EXTENSION_ID~tee-env-INITIAL_OWNER=$INITIAL_OWNER~tee-env-PROXY_URL=http://$SUPPORT_INTERNAL:6673~tee-env-CHAIN_ID=${CHAIN_ID:-114}~tee-env-GOVERNANCE_SIGNERS=${GOVERNANCE_SIGNERS:-$INITIAL_OWNER}~tee-env-GOVERNANCE_THRESHOLD=${GOVERNANCE_THRESHOLD:-1}" 2>&1 | tail -3; then
             TEE_ZONE="$zone"
             break 2
         fi

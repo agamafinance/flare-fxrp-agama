@@ -84,7 +84,14 @@ USER 0:0
 
 # Must match go/Dockerfile's list exactly — a mismatch means Confidential Space
 # silently rejects operator env overrides at attestation time.
-LABEL "tee.launch_policy.allow_env_override"="LOG_LEVEL,PROXY_URL,INITIAL_OWNER,EXTENSION_ID,CHAIN_URL,MODE,CONFIG_PORT,SIGN_PORT,EXTENSION_PORT"
+# CHAIN_ID, GOVERNANCE_SIGNERS and GOVERNANCE_THRESHOLD are additions to the
+# scaffold's list. Without CHAIN_ID the node signs against chain 0 and the proxy
+# rejects its very first response ("verifying response signature: invalid
+# signature"); without the governance pair, what the node signs cannot match what
+# set-governance registers on chain. Neither can be supplied at launch unless the
+# image whitelists it here, so on a real Confidential Space VM the scaffold's list
+# is not enough.
+LABEL "tee.launch_policy.allow_env_override"="LOG_LEVEL,PROXY_URL,INITIAL_OWNER,EXTENSION_ID,CHAIN_URL,CHAIN_ID,MODE,CONFIG_PORT,SIGN_PORT,EXTENSION_PORT,GOVERNANCE_SIGNERS,GOVERNANCE_THRESHOLD"
 
 # Without this, a production Confidential Space image refuses
 # tee-container-log-redirect and shuts the VM down before the workload starts
