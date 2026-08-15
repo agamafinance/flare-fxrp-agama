@@ -136,14 +136,17 @@ It prints the live node's view beside the `FlareTeeManager` record — machine i
 platform, code hash, instruction sender — and the machine status (2 = production). When
 registration stalls, it says in one screen whether the fault is here or upstream.
 
-**Honest status of the self-hosted indexer.** Its FSP event backfill is fast and reliable — two
-reward epochs of signing policies, voter registrations and reward offers land in about three
-seconds. Its *block* catch-up is not: across several clean runs it indexed one range of ~17k blocks
-successfully and then, on every subsequent attempt, sat at 0 rows with the process idle (no CPU, no
-network, no error line) while the proxy refused to serve on `Database out of sync`. Concurrency,
-the RPC endpoint and a wiped volume made no difference. Until that is understood, the pragmatic
-route to a promoted machine is to ask Flare for credentials to their hosted indexer — the
-documented path — and keep this one for the FSP data it does deliver well.
+**Budget hours for the first sync.** The FSP event backfill is fast — two reward epochs of signing
+policies, voter registrations and reward offers land in about three seconds. Block catch-up is not:
+measured on an e2-standard-4, it commits one 1000-block batch roughly every 13 minutes, about 75
+blocks a minute, against a chain producing 33. It converges, but a cold start one reward epoch back
+is a couple of hours, and the proxy refuses to serve on `Database out of sync` until it does.
+
+It also looks stalled while it works: rows appear only when a 1000-block batch commits, and nothing
+is logged in between — no progress line, no rate. Watch `select max(number) from blocks` rather than
+the log, and do not restart the indexer to "unstick" it. Restarting is actively harmful: each restart
+recomputes the catch-up range and re-walks blocks it already had, which is how a sync that would
+have finished on its own turns into one that never does.
 
 **The trap that cost the most: a self-hosted indexer pins the proxy to a stale signing policy.**
 With `history_epochs = 0` the indexer keeps ~15 minutes of blocks, and history drop deletes each new
