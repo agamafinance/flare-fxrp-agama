@@ -12,9 +12,12 @@
 [indexer]
 mode = "fsp"
 history_epochs = 0
-rpc_concurrency = 20      # conservative: this is Flare's shared public endpoint
+rpc_concurrency = 20      # a shared third-party endpoint: back off before it does
 batch_size = 1000
-log_range = 1000          # the public RPC's eth_getLogs cap
+log_range = 1000          # must match the endpoint's eth_getLogs cap: a wider range is
+                          # rejected outright and the indexer retries it silently, so the
+                          # backfill simply never advances. Flare's own public RPC caps
+                          # this at 30 blocks, which makes a cold start take hours.
 new_block_check_millis = 1000
 confirmations = 1
 
@@ -23,7 +26,10 @@ level = "INFO"
 console = true
 
 [chain]
-node_url = "https://coston2-api.flare.network/ext/C/rpc"
+# Flare's public RPC caps eth_getLogs at 30 blocks, which turns the FSP backfill
+# into ~17k requests. This endpoint serves 1000-block ranges, so the same backfill
+# is ~500. Only the indexer uses it; the enclave's own reads stay on Flare's RPC.
+node_url = "https://rpc.ankr.com/flare_coston2"
 chain_type = 1            # Avalanche-based
 
 [db]
