@@ -344,11 +344,17 @@ func WaitForOwnAttestationResult(hostURL string, instructionID [32]byte) error {
 	for i := range 60 {
 		resp, err := http.Get(url)
 		if err == nil {
-			var res struct {
-				Status uint8  `json:"status"`
-				Log    string `json:"log"`
+			// The proxy wraps the ActionResult in an envelope that also carries the
+			// node and proxy signatures. Decoding status at the top level silently
+			// yields 0 — a successful result then reads as a failure.
+			var body struct {
+				Result struct {
+					Status uint8  `json:"status"`
+					Log    string `json:"log"`
+				} `json:"result"`
 			}
-			decErr := json.NewDecoder(resp.Body).Decode(&res)
+			decErr := json.NewDecoder(resp.Body).Decode(&body)
+			res := body.Result
 			code := resp.StatusCode
 			resp.Body.Close()
 			if code == 200 && decErr == nil {
@@ -357,11 +363,11 @@ func WaitForOwnAttestationResult(hostURL string, instructionID [32]byte) error {
 					return nil
 				}
 				return errors.Errorf(
-					"our TEE rejected the attestation instruction (status %d): %s\n"+
+					"our TEE rejected the attestation instruction (status %d): %q\n"+
 						"The result is served, so delivery works — the node refused the work itself. "+
-						"'policy of the given reward epoch not in the storage' means the node holds only the "+
-						"next signing policy, announced early, and not the one the instruction is stamped with; "+
-						"it clears when that epoch actually starts.",
+						"Read the enclave log around the 'F_REG, TEE_ATTESTATION' line for the reason; one seen "+
+						"in practice is 'policy of the given reward epoch not in the storage', where the node holds "+
+						"only the next signing policy, announced ahead of its epoch.",
 					res.Status, res.Log)
 			}
 		}
