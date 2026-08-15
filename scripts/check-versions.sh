@@ -25,13 +25,17 @@ die()  { echo -e "${RED}[check-versions] ERROR:${NC} $*" >&2; exit 1; }
 source "$SCRIPT_DIR/lib/versions.sh"
 load_versions "$PROJECT_DIR" || die "could not load versions"
 
-# Locate the two go.mod files (extension module may be at ./ or ./go/).
+# Locate the two go.mod files (extension module may be at ./ or ./go/). This
+# extension ships Python only, so when neither exists the tooling module carries
+# the tee-node pin on its own and the cross-check below degenerates to a floor check.
+TOOLS_GOMOD="$PROJECT_DIR/tools/go.mod"
 if [[ -f "$PROJECT_DIR/go/go.mod" ]]; then
     EXT_GOMOD="$PROJECT_DIR/go/go.mod"
-else
+elif [[ -f "$PROJECT_DIR/go.mod" ]]; then
     EXT_GOMOD="$PROJECT_DIR/go.mod"
+else
+    EXT_GOMOD="$TOOLS_GOMOD"
 fi
-TOOLS_GOMOD="$PROJECT_DIR/tools/go.mod"
 
 pin() { grep -E "^[[:space:]]*${2//\//\\/}[[:space:]]+v" "$1" 2>/dev/null | head -1 | awk '{print $2}'; }
 

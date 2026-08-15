@@ -29,7 +29,7 @@ list_languages() {
 #   LANGUAGE_SETUP_CMD     optional pre-test install step
 load_language() {
     local root="${1:?load_language requires the project dir}"
-    local lang="${2:-${LANGUAGE:-go}}"
+    local lang="${2:-${LANGUAGE:-python}}"
     local manifest="$root/$lang/language.env"
 
     if [[ ! -f "$manifest" ]]; then

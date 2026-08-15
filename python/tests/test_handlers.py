@@ -1,127 +1,142 @@
-"""Hello World handlers — behaviour must match go/internal/extension/extension.go."""
+"""The confidential RFQ handlers.
+
+The chain is stubbed (see tests/helpers.py): these tests pin the extension's own
+guarantees — a quote is only accepted if its market maker signed it, best
+execution respects the seller's reserve and the FTSO USD band, and only the
+winner ever leaves the enclave.
+"""
 
 import json
 
-import pytest
-from eth_abi import encode as abi_encode
-
-from app import handlers
+from app import chain, handlers, quotes
 from base.encoding import bytes_to_hex, hex_to_bytes
+from tests.helpers import (
+    DEADLINE,
+    MIN_PRICE,
+    MM1,
+    MM2,
+    NOW,
+    RFQ,
+    SELLER,
+    YT_AMOUNT,
+    addr,
+    decode_settlement,
+    quote_msg,
+    settle_msg,
+    signed_quote,
+)
 
 
-@pytest.fixture(autouse=True)
-def _reset():
-    handlers.reset_state()
-    yield
-    handlers.reset_state()
-
-
-def _json_msg(obj):
-    return bytes_to_hex(json.dumps(obj).encode("utf-8"))
-
-
-def _goodbye_msg(name, reason):
-    return bytes_to_hex(abi_encode(["(string,string)"], [(name, reason)]))
-
-
-class TestSayHello:
-    def test_success(self):
-        data, status, err = handlers.handle_say_hello(_json_msg({"name": "World"}))
+class TestQuote:
+    def test_authentic_quote_is_accepted(self):
+        data, status, err = handlers.handle_quote(quote_msg(signed_quote(MM1, 6_000_000)))
         assert (status, err) == (1, None)
-        resp = json.loads(hex_to_bytes(data))
-        assert resp == {
-            "greeting": "Hello, World! Welcome to Flare Confidential Compute.",
-            "greetingNumber": 1,
-        }
+        body = json.loads(hex_to_bytes(data))
+        assert body == {"accepted": True, "rfqId": 1, "quotesHeld": 1}
 
-    def test_counter_increments(self):
-        for expected in (1, 2, 3):
-            data, status, _ = handlers.handle_say_hello(_json_msg({"name": "A"}))
-            assert status == 1
-            assert json.loads(hex_to_bytes(data))["greetingNumber"] == expected
+    def test_response_never_carries_a_price(self):
+        _ = handlers.handle_quote(quote_msg(signed_quote(MM1, 6_000_000)))
+        data, _s, _e = handlers.handle_quote(quote_msg(signed_quote(MM2, 4_000_000)))
+        assert "4000000" not in hex_to_bytes(data).decode()
 
-    def test_empty_name_rejected(self):
-        data, status, err = handlers.handle_say_hello(_json_msg({"name": ""}))
-        assert (data, status) == (None, 0)
-        assert "name must not be empty" in err
-
-    def test_missing_name_rejected(self):
-        _, status, err = handlers.handle_say_hello(_json_msg({}))
+    def test_quote_forged_for_another_mm_is_rejected(self):
+        # MM2 signs, but claims to be MM1
+        payload = signed_quote(MM2, 6_000_000, mm=addr(MM1))
+        _data, status, err = handlers.handle_quote(quote_msg(payload))
         assert status == 0
-        assert "name must not be empty" in err
+        assert "does not recover" in err
 
-    def test_unknown_field_rejected(self):
-        # Matches Go's dec.DisallowUnknownFields().
-        _, status, err = handlers.handle_say_hello(
-            _json_msg({"name": "A", "extra": 1})
-        )
+    def test_below_reserve_is_rejected(self):
+        _data, status, err = handlers.handle_quote(quote_msg(signed_quote(MM1, MIN_PRICE - 1)))
+        assert (status, err) == (0, "below the seller's reserve")
+
+    def test_wrong_chain_is_rejected(self):
+        _data, status, err = handlers.handle_quote(quote_msg(signed_quote(MM1, 6_000_000, chain_id=1)))
         assert status == 0
-        assert "unknown field" in err
+        assert "chainId" in err
 
-    def test_invalid_json_rejected(self):
-        _, status, err = handlers.handle_say_hello(bytes_to_hex(b"not json"))
-        assert status == 0
-        assert "decoding request" in err
+    def test_quote_expiring_before_settlement_is_rejected(self):
+        payload = signed_quote(MM1, 6_000_000, deadline=NOW + 10)
+        _data, status, err = handlers.handle_quote(quote_msg(payload))
+        assert (status, err) == (0, "quote expires too soon to settle")
 
-    def test_invalid_hex_rejected(self):
-        _, status, err = handlers.handle_say_hello("0xZZ")
-        assert status == 0
-        assert "decoding request" in err
+    def test_seller_cannot_quote_its_own_rfq(self):
+        _data, status, err = handlers.handle_quote(quote_msg(signed_quote(SELLER, 6_000_000)))
+        assert (status, err) == (0, "seller cannot quote on its own RFQ")
 
-    def test_failure_does_not_increment_counter(self):
-        handlers.handle_say_hello(_json_msg({"name": ""}))
-        data, status, _ = handlers.handle_say_hello(_json_msg({"name": "A"}))
-        assert json.loads(hex_to_bytes(data))["greetingNumber"] == 1
+    def test_a_market_maker_holds_one_live_quote(self):
+        handlers.handle_quote(quote_msg(signed_quote(MM1, 4_000_000)))
+        data, _s, _e = handlers.handle_quote(quote_msg(signed_quote(MM1, 6_000_000)))
+        assert json.loads(hex_to_bytes(data))["quotesHeld"] == 1
+        assert quotes.quotes_for(RFQ, 1)[0].price == 6_000_000
+
+    def test_malformed_payload_is_an_error_not_a_crash(self):
+        _data, status, err = handlers.handle_quote(bytes_to_hex(b"not json"))
+        assert status == 0 and "JSON" in err
 
 
-class TestSayGoodbye:
-    def test_success(self):
-        data, status, err = handlers.handle_say_goodbye(_goodbye_msg("World", "done"))
+class TestSettle:
+    def test_best_price_wins_and_only_the_winner_comes_out(self):
+        handlers.handle_quote(quote_msg(signed_quote(MM1, 4_000_000)))
+        handlers.handle_quote(quote_msg(signed_quote(MM2, 6_000_000)))
+
+        data, status, err = handlers.handle_settle(settle_msg())
         assert (status, err) == (1, None)
-        resp = json.loads(hex_to_bytes(data))
-        assert resp == {
-            "farewell": "Goodbye, World! Reason: done",
-            "farewellNumber": 1,
-        }
 
-    def test_counter_is_independent_of_greeting(self):
-        handlers.handle_say_hello(_json_msg({"name": "A"}))
-        data, _, _ = handlers.handle_say_goodbye(_goodbye_msg("B", "r"))
-        assert json.loads(hex_to_bytes(data))["farewellNumber"] == 1
+        contract, rfq_id, seller, winner, yt_amount, price, deadline = decode_settlement(data)
+        assert contract.lower() == RFQ
+        assert rfq_id == 1
+        assert seller.lower() == addr(SELLER)
+        assert winner.lower() == addr(MM2)
+        assert (yt_amount, price, deadline) == (YT_AMOUNT, 6_000_000, DEADLINE)
+        # the losing quote is nowhere in the output
+        assert addr(MM1) not in data.lower()
 
-    def test_empty_name_rejected(self):
-        _, status, err = handlers.handle_say_goodbye(_goodbye_msg("", "r"))
-        assert status == 0
-        assert "name must not be empty" in err
+    def test_settlement_clears_the_book(self):
+        handlers.handle_quote(quote_msg(signed_quote(MM1, 6_000_000)))
+        handlers.handle_settle(settle_msg())
+        assert quotes.quotes_for(RFQ, 1) == []
 
-    def test_empty_reason_is_allowed(self):
-        # Go validates name only.
-        data, status, _ = handlers.handle_say_goodbye(_goodbye_msg("W", ""))
+    def test_no_quotes_is_an_error(self):
+        _data, status, err = handlers.handle_settle(settle_msg())
+        assert (status, err) == (0, "no quotes held for this rfq")
+
+    def test_an_insolvent_winner_is_skipped(self, monkeypatch):
+        handlers.handle_quote(quote_msg(signed_quote(MM1, 4_000_000)))
+        handlers.handle_quote(quote_msg(signed_quote(MM2, 6_000_000)))
+        monkeypatch.setattr(chain, "mm_can_pay", lambda _f, _r, mm, _p: mm != addr(MM2))
+
+        data, status, _err = handlers.handle_settle(settle_msg())
         assert status == 1
-        assert json.loads(hex_to_bytes(data))["farewell"] == "Goodbye, W! Reason: "
+        assert decode_settlement(data)[3].lower() == addr(MM1)
 
-    def test_json_payload_rejected(self):
-        # SAY_GOODBYE is ABI-encoded; JSON must not silently decode.
-        _, status, err = handlers.handle_say_goodbye(_json_msg({"name": "W"}))
-        assert status == 0
-        assert "decoding request" in err
+    def test_a_premium_above_the_usd_band_is_rejected(self):
+        # 60 FXRP at $0.50 is $30, over the $10 per-settlement cap
+        handlers.handle_quote(quote_msg(signed_quote(MM1, 60_000_000)))
+        _data, status, err = handlers.handle_settle(settle_msg())
+        assert status == 0 and "FTSO USD band" in err
+
+    def test_expired_quotes_do_not_settle(self, monkeypatch):
+        handlers.handle_quote(quote_msg(signed_quote(MM1, 6_000_000)))
+        monkeypatch.setattr(chain, "latest_block_timestamp", lambda: DEADLINE + 1)
+        _data, status, err = handlers.handle_settle(settle_msg())
+        assert (status, err) == (0, "every held quote has expired")
+
+    def test_a_closed_rfq_does_not_settle(self, monkeypatch):
+        handlers.handle_quote(quote_msg(signed_quote(MM1, 6_000_000)))
+        monkeypatch.setattr(
+            chain, "read_rfq", lambda _r, _i: (addr(SELLER), YT_AMOUNT, MIN_PRICE, NOW + 900, False)
+        )
+        _data, status, err = handlers.handle_settle(settle_msg())
+        assert (status, err) == (0, "rfq not open")
 
 
-class TestReportState:
-    def test_initial(self):
-        assert handlers.report_state() == {
-            "greetingCount": 0,
-            "lastGreeting": "",
-            "farewellCount": 0,
-            "lastFarewell": "",
-        }
-
-    def test_tracks_both_operations(self):
-        handlers.handle_say_hello(_json_msg({"name": "A"}))
-        handlers.handle_say_goodbye(_goodbye_msg("B", "r"))
-        assert handlers.report_state() == {
-            "greetingCount": 1,
-            "lastGreeting": "Hello, A! Welcome to Flare Confidential Compute.",
-            "farewellCount": 1,
-            "lastFarewell": "Goodbye, B! Reason: r",
-        }
+class TestState:
+    def test_state_reports_counts_not_quotes(self):
+        handlers.handle_quote(quote_msg(signed_quote(MM1, 6_000_000)))
+        handlers.handle_quote(quote_msg(signed_quote(MM1, MIN_PRICE - 1)))
+        state = handlers.report_state()
+        assert state["quotesAccepted"] == 1
+        assert state["quotesRejected"] == 1
+        assert state["quotesHeld"] == 1
+        assert "6000000" not in json.dumps(state)

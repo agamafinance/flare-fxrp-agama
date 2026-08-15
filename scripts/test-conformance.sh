@@ -154,7 +154,7 @@ run_fixture() {
     local code
     code="$(curl -s -o "$resp_file" -w '%{http_code}' \
         -X "$method" -H 'Content-Type: application/json' \
-        "${body_args[@]}" "http://127.0.0.1:$port$path" 2>/dev/null)"
+        ${body_args[@]+"${body_args[@]}"} "http://127.0.0.1:$port$path" 2>/dev/null)"
 
     local expected_status; expected_status="$(jq -r '.expect.status' "$file")"
     local fail=""
@@ -240,7 +240,7 @@ if [[ "$RUN_ALL" == "true" ]]; then
         run_language "$lang" || FAILED_LANGS+=("$lang")
     done < <(list_languages "$PROJECT_DIR")
 else
-    lang="${TARGET:-${LANGUAGE:-go}}"
+    lang="${TARGET:-${LANGUAGE:-python}}"
     run_language "$lang" || FAILED_LANGS+=("$lang")
 fi
 

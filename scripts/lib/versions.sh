@@ -26,6 +26,10 @@ _versions_gomod() {
         echo "$root/go/go.mod"
     elif [[ -f "$root/go.mod" ]]; then
         echo "$root/go.mod"
+    elif [[ -f "$root/tools/go.mod" ]]; then
+        # This extension ships Python only, so the deploy tooling's go.mod is the
+        # remaining tee-node pin. check-versions.sh still enforces they agree.
+        echo "$root/tools/go.mod"
     else
         return 1
     fi

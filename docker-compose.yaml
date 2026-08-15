@@ -26,7 +26,7 @@ services:
       context: .
       # Selected by LANGUAGE in .env; start-services.sh resolves <LANGUAGE>/Dockerfile
       # by directory convention. Adding a language needs no change here.
-      dockerfile: ${EXTENSION_DOCKERFILE:-go/Dockerfile}
+      dockerfile: ${EXTENSION_DOCKERFILE:-python/Dockerfile}
       args:
         SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH:-0}
         # Consumed by language images that build tee-node from source. A Go

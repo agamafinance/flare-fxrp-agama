@@ -5,6 +5,10 @@
 # image build time — that is what lets python/Dockerfile install with
 # --no-install-recommends and skip the ~300MB build toolchain.
 #
-# Only needed for ABI-encoded payloads (app/abi.py, used by SAY_GOODBYE).
-# An extension whose operations are all JSON needs no dependencies at all.
+# eth-abi   — the SETTLE payload and the settlement result are ABI-encoded.
+# eth-keys  — recovering the market maker that signed a sealed quote.
+# eth-utils — keccak over the quote digest (pycryptodome backend, no C build).
 eth-abi==5.2.0
+eth-keys==0.7.0
+eth-utils==5.3.0
+eth-hash[pycryptodome]==0.7.1

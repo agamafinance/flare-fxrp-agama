@@ -2,10 +2,9 @@ package utils
 
 import (
 	"context"
-	"math/big"
 	"time"
 
-	"extension-scaffold/tools/pkg/contracts/helloworld"
+	"extension-scaffold/tools/pkg/contracts/agamarfq"
 	"extension-scaffold/tools/pkg/fccutils"
 	"extension-scaffold/tools/pkg/support"
 
@@ -16,16 +15,26 @@ import (
 	"github.com/pkg/errors"
 )
 
-func DeployInstructionSender(s *support.Support) (common.Address, *helloworld.HelloWorldInstructionSender, error) {
+func DeployInstructionSender(s *support.Support) (common.Address, *agamarfq.AgamaRfqInstructionSender, error) {
 	opts, err := bind.NewKeyedTransactorWithChainID(s.Prv, s.ChainID)
 	if err != nil {
 		return common.Address{}, nil, errors.Errorf("failed to create transactor: %s", err)
 	}
 
+	// The RFQ escrows YT and pays the seller in FXRP, so the traded pair is a deploy input.
+	fxrp, err := addressFromEnv("FXRP_ADDR")
+	if err != nil {
+		return common.Address{}, nil, err
+	}
+	yt, err := addressFromEnv("YT_ADDR")
+	if err != nil {
+		return common.Address{}, nil, err
+	}
+
 	// Both registry args are the FlareTeeManager diamond proxy: the diamond
 	// routes ExtensionManager and MachineManager calls to the right facets.
-	address, tx, contract, err := helloworld.DeployHelloWorldInstructionSender(
-		opts, s.ChainClient, s.Addresses.FlareTeeManager, s.Addresses.FlareTeeManager,
+	address, tx, contract, err := agamarfq.DeployAgamaRfqInstructionSender(
+		opts, s.ChainClient, s.Addresses.FlareTeeManager, s.Addresses.FlareTeeManager, fxrp, yt,
 	)
 	if err != nil {
 		return common.Address{}, nil, errors.Errorf("failed to deploy contract: %s", err)
@@ -46,7 +55,7 @@ func DeployInstructionSender(s *support.Support) (common.Address, *helloworld.He
 }
 
 func SetExtensionId(s *support.Support, instructionSenderAddress common.Address) error {
-	sender, err := helloworld.NewHelloWorldInstructionSender(instructionSenderAddress, s.ChainClient)
+	sender, err := agamarfq.NewAgamaRfqInstructionSender(instructionSenderAddress, s.ChainClient)
 	if err != nil {
 		return errors.Errorf("failed to bind contract: %s", err)
 	}
@@ -60,7 +69,7 @@ func SetExtensionId(s *support.Support, instructionSenderAddress common.Address)
 	if err != nil {
 		reason := fccutils.DecodeRevertReason(err)
 		if reason == "" {
-			parsed, _ := helloworld.HelloWorldInstructionSenderMetaData.GetAbi()
+			parsed, _ := agamarfq.AgamaRfqInstructionSenderMetaData.GetAbi()
 			if parsed != nil {
 				callData, packErr := parsed.Pack("setExtensionId")
 				if packErr == nil {
@@ -83,7 +92,7 @@ func SetExtensionId(s *support.Support, instructionSenderAddress common.Address)
 	}
 
 	if receipt.Status != types.ReceiptStatusSuccessful {
-		parsed, _ := helloworld.HelloWorldInstructionSenderMetaData.GetAbi()
+		parsed, _ := agamarfq.AgamaRfqInstructionSenderMetaData.GetAbi()
 		if parsed != nil {
 			callData, packErr := parsed.Pack("setExtensionId")
 			if packErr == nil {
@@ -100,111 +109,4 @@ func SetExtensionId(s *support.Support, instructionSenderAddress common.Address)
 	}
 
 	return nil
-}
-
-func SendSayHello(s *support.Support, instructionSenderAddress common.Address, message []byte) (common.Hash, common.Hash, error) {
-	sender, err := helloworld.NewHelloWorldInstructionSender(instructionSenderAddress, s.ChainClient)
-	if err != nil {
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed to bind contract: %s", err)
-	}
-
-	opts, err := bind.NewKeyedTransactorWithChainID(s.Prv, s.ChainID)
-	if err != nil {
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed to create transactor: %s", err)
-	}
-	opts.Value = big.NewInt(1000000) // Instruction fee in wei — must match registry's required fee
-
-	tx, err := sender.SendSayHello(opts, message)
-	if err != nil {
-		reason := fccutils.DecodeRevertReason(err)
-		if reason == "" {
-			parsed, _ := helloworld.HelloWorldInstructionSenderMetaData.GetAbi()
-			if parsed != nil {
-				callData, packErr := parsed.Pack("sendSayHello", message)
-				if packErr == nil {
-					from := crypto.PubkeyToAddress(s.Prv.PublicKey)
-					reason = fccutils.SimulateAndDecodeRevert(
-						s.ChainClient, from, instructionSenderAddress,
-						big.NewInt(1000000), callData,
-					)
-				}
-			}
-		}
-		if reason != "" {
-			return common.Hash{}, common.Hash{}, errors.Errorf("failed to send instruction: %s (revert reason: %s)", err, reason)
-		}
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed to send instruction: %s", err)
-	}
-
-	receipt, err := bind.WaitMined(context.Background(), s.ChainClient, tx)
-	if err != nil {
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed waiting for transaction: %s", err)
-	}
-
-	if receipt.Status != 1 {
-		parsed, _ := helloworld.HelloWorldInstructionSenderMetaData.GetAbi()
-		if parsed != nil {
-			callData, packErr := parsed.Pack("sendSayHello", message)
-			if packErr == nil {
-				from := crypto.PubkeyToAddress(s.Prv.PublicKey)
-				reason := fccutils.SimulateAndDecodeRevert(
-					s.ChainClient, from, instructionSenderAddress,
-					big.NewInt(1000000), callData,
-				)
-				if reason != "" {
-					return common.Hash{}, common.Hash{}, errors.Errorf("transaction failed with status %d (revert reason: %s)", receipt.Status, reason)
-				}
-			}
-		}
-		return common.Hash{}, common.Hash{}, errors.Errorf("transaction failed with status: %d", receipt.Status)
-	}
-
-	if len(receipt.Logs) == 0 {
-		return common.Hash{}, common.Hash{}, errors.New("no logs found in receipt")
-	}
-
-	instructionSent, err := s.TeeVerification.ParseTeeInstructionsSent(*receipt.Logs[0])
-	if err != nil {
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed to parse TeeInstructionsSent event: %s", err)
-	}
-
-	return instructionSent.InstructionId, receipt.TxHash, nil
-}
-
-func SendSayGoodbye(s *support.Support, instructionSenderAddress common.Address, name string, reason string) (common.Hash, common.Hash, error) {
-	sender, err := helloworld.NewHelloWorldInstructionSender(instructionSenderAddress, s.ChainClient)
-	if err != nil {
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed to bind contract: %s", err)
-	}
-
-	opts, err := bind.NewKeyedTransactorWithChainID(s.Prv, s.ChainID)
-	if err != nil {
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed to create transactor: %s", err)
-	}
-	opts.Value = big.NewInt(1000000) // Instruction fee in wei — must match registry's required fee
-
-	tx, err := sender.SendSayGoodbye(opts, name, reason)
-	if err != nil {
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed to send instruction: %s", err)
-	}
-
-	receipt, err := bind.WaitMined(context.Background(), s.ChainClient, tx)
-	if err != nil {
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed waiting for transaction: %s", err)
-	}
-
-	if receipt.Status != 1 {
-		return common.Hash{}, common.Hash{}, errors.Errorf("transaction failed with status: %d", receipt.Status)
-	}
-
-	if len(receipt.Logs) == 0 {
-		return common.Hash{}, common.Hash{}, errors.New("no logs found in receipt")
-	}
-
-	instructionSent, err := s.TeeVerification.ParseTeeInstructionsSent(*receipt.Logs[0])
-	if err != nil {
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed to parse TeeInstructionsSent event: %s", err)
-	}
-
-	return instructionSent.InstructionId, receipt.TxHash, nil
 }

@@ -3,23 +3,25 @@
 import json
 
 import pytest
-from eth_abi import encode as abi_encode
 
 from app import handlers
 from app.config import VERSION
 from base.encoding import bytes_to_hex, hex_to_bytes, string_to_bytes32_hex
 from base.server import Server
+from tests.helpers import MM1, RFQ, quote_msg, settle_msg, signed_quote
 
 
 @pytest.fixture
 def srv():
-    handlers.reset_state()
-    s = Server(0, 0, VERSION, handlers.register, handlers.report_state)
-    yield s
-    handlers.reset_state()
+    return Server(0, 0, VERSION, handlers.register, handlers.report_state)
 
 
-def build_action(op_type="GREETING", op_command="SAY_HELLO", original=b"", action_id=None):
+def a_quote(price=6_000_000):
+    """A well-formed sealed quote, as raw bytes for the action's originalMessage."""
+    return hex_to_bytes(quote_msg(signed_quote(MM1, price)))
+
+
+def build_action(op_type="RFQ", op_command="QUOTE", original=b"", action_id=None):
     """Build a POST /action body in the exact shape tee-node sends."""
     data_fixed = {
         "instructionId": action_id or "0x" + "11" * 32,
@@ -102,29 +104,26 @@ class TestMalformedInput:
 
 class TestActionResultWireFormat:
     def test_success_shape(self, srv):
-        msg = json.dumps({"name": "World"}).encode()
-        status, body = srv.handle_request("POST", "/action", build_action(original=msg))
+        status, body = srv.handle_request("POST", "/action", build_action(original=a_quote()))
 
         assert status == 200
         assert body["status"] == 1
         assert body["log"] == "ok"
-        assert body["opType"] == string_to_bytes32_hex("GREETING")
-        assert body["opCommand"] == string_to_bytes32_hex("SAY_HELLO")
+        assert body["opType"] == string_to_bytes32_hex("RFQ")
+        assert body["opCommand"] == string_to_bytes32_hex("QUOTE")
         assert body["data"].startswith("0x")
 
     def test_version_is_plain_string_not_bytes32(self, srv):
         # Contract §4.4: tee-node declares `Version string`. The sign repo's
         # Python/TS ports hex-encode this and are wrong; this test pins it.
-        msg = json.dumps({"name": "World"}).encode()
-        _, body = srv.handle_request("POST", "/action", build_action(original=msg))
+        _, body = srv.handle_request("POST", "/action", build_action(original=a_quote()))
 
         assert body["version"] == "0.1.0"
         assert not body["version"].startswith("0x")
 
     def test_handler_error_is_http_200_with_status_0(self, srv):
         # Handler failure is signalled in the body, never by the HTTP status.
-        msg = json.dumps({"name": ""}).encode()
-        status, body = srv.handle_request("POST", "/action", build_action(original=msg))
+        status, body = srv.handle_request("POST", "/action", build_action(original=b"not a quote"))
 
         assert status == 200
         assert body["status"] == 0
@@ -136,8 +135,7 @@ class TestActionResultWireFormat:
         # tee-node's ActionResult has no omitempty tags, so every field appears
         # on the wire regardless of value. Verified against Go by the
         # conformance fixtures in testdata/conformance/.
-        msg = json.dumps({"name": "W"}).encode()
-        _, body = srv.handle_request("POST", "/action", build_action(original=msg))
+        _, body = srv.handle_request("POST", "/action", build_action(original=a_quote()))
 
         assert set(body) == {
             "id", "submissionTag", "status", "log", "opType",
@@ -147,23 +145,23 @@ class TestActionResultWireFormat:
 
     def test_echoes_id_and_submission_tag(self, srv):
         action_id = "0x" + "ab" * 32
-        msg = json.dumps({"name": "W"}).encode()
         _, body = srv.handle_request(
-            "POST", "/action", build_action(original=msg, action_id=action_id)
+            "POST", "/action", build_action(original=a_quote(), action_id=action_id)
         )
         assert body["id"] == action_id
         assert body["submissionTag"] == "submit"
 
-    def test_say_goodbye_abi_path(self, srv):
-        msg = abi_encode(["(string,string)"], [("World", "done")])
+    def test_settle_abi_path(self, srv):
+        # The on-chain instruction is ABI-encoded, not JSON — the other wire shape.
+        srv.handle_request("POST", "/action", build_action(original=a_quote()))
         _, body = srv.handle_request(
-            "POST", "/action", build_action(op_command="SAY_GOODBYE", original=msg)
+            "POST",
+            "/action",
+            build_action(op_command="SETTLE", original=hex_to_bytes(settle_msg())),
         )
         assert body["status"] == 1
-        assert json.loads(hex_to_bytes(body["data"])) == {
-            "farewell": "Goodbye, World! Reason: done",
-            "farewellNumber": 1,
-        }
+        assert body["opCommand"] == string_to_bytes32_hex("SETTLE")
+        assert len(hex_to_bytes(body["data"])) == 7 * 32
 
 
 class TestStateWireFormat:
@@ -175,8 +173,9 @@ class TestStateWireFormat:
         assert len(body["stateVersion"]) == 66
 
     def test_state_reflects_handler_effects(self, srv):
-        msg = json.dumps({"name": "World"}).encode()
-        srv.handle_request("POST", "/action", build_action(original=msg))
+        srv.handle_request("POST", "/action", build_action(original=a_quote()))
         _, body = srv.handle_request("GET", "/state", b"")
-        assert body["state"]["greetingCount"] == 1
-        assert body["state"]["lastGreeting"].startswith("Hello, World!")
+        assert body["state"]["quotesAccepted"] == 1
+        assert body["state"]["quotesHeld"] == 1
+        # the book itself never appears in /state
+        assert RFQ not in json.dumps(body["state"])

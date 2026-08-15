@@ -105,7 +105,7 @@ load_versions "$PROJECT_DIR" || die "could not derive dependency versions"
 
 # --- Guard: --local runs Go binaries directly, so it is Go-only ---------------
 if [[ "$USE_LOCAL" == "true" && "$LANGUAGE" != "go" ]]; then
-    die "--local mode builds and runs Go binaries in-process and only supports LANGUAGE=go (got '$LANGUAGE').\n  Use Docker Compose mode instead: ./scripts/start-services.sh --chain $CHAIN"
+    die "--local mode runs Go binaries in-process; this extension ships Python only.\n  Use Docker Compose mode instead: ./scripts/start-services.sh --chain $CHAIN"
 fi
 
 # --- Resolve local-siblings toggle ---
@@ -117,7 +117,7 @@ esac
 # The sibling build compiles tee-node into the Go binary; other languages build
 # tee-node as a separate binary from a pinned ref and have no sibling path.
 if [[ "$USE_LOCAL_SIBLINGS" == "true" && "$LANGUAGE" != "go" ]]; then
-    die "USE_LOCAL_SIBLINGS is only supported for LANGUAGE=go (got '$LANGUAGE').\n  Other languages build tee-node from the pinned ref ($TEE_NODE_REF).\n  To test a local tee-node there, push it and update the pin in go/go.mod."
+    die "USE_LOCAL_SIBLINGS needs an in-repo Go extension; this one ships Python only.\n  The image builds tee-node from the pinned ref ($TEE_NODE_REF).\n  To test a local tee-node, push it and update the pin in tools/go.mod."
 fi
 
 log "Chain:          $CHAIN"

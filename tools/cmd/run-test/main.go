@@ -1,8 +1,16 @@
+// run-test drives one full confidential RFQ against a deployed extension:
+// open an RFQ on chain, submit two sealed quotes straight to the TEE proxy
+// (they never touch the chain), ask the enclave to settle, then relay the
+// signed winning settlement back on chain and check who was paid.
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
+	"io"
+	"math/big"
+	"net/http"
 	"strings"
 	"time"
 
@@ -11,168 +19,251 @@ import (
 	"extension-scaffold/tools/pkg/support"
 	instrutils "extension-scaffold/tools/pkg/utils"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/pkg/errors"
 )
 
-// Expected response shapes for the scaffold's Hello World operations.
-//
-// These are deliberately declared here rather than imported from the extension:
-// this tool asserts on the *wire format*, and must run unchanged against every
-// language implementation (see docs/extension-contract.md). Keeping them local
-// is what lets tools/ stay independent of any one implementation.
+const (
+	opTypeRFQ     = "RFQ"
+	opCommandQuot = "QUOTE"
+	// The RFQ terms used by the test. Amounts are in the tokens' own units.
+	ytAmount = 100_000_000 // 100 YT at 6dp
+	reserve  = 2_000_000   // 2 FXRP
+	lowBid   = 4_000_000   // 4 FXRP
+	highBid  = 6_000_000   // 6 FXRP — this one must win
+)
 
-type sayHelloResponse struct {
-	Greeting       string `json:"greeting"`
-	GreetingNumber int    `json:"greetingNumber"`
+// directAction is the body the proxy accepts on /direct: the same (opType,
+// opCommand, message) triple an on-chain instruction carries.
+type directAction struct {
+	OPType    string `json:"opType"`
+	OPCommand string `json:"opCommand"`
+	Message   string `json:"message"`
 }
 
-type sayGoodbyeResponse struct {
-	Farewell       string `json:"farewell"`
-	FarewellNumber int    `json:"farewellNumber"`
+func bytes32(s string) string {
+	b := make([]byte, 32)
+	copy(b, s)
+	return "0x" + common.Bytes2Hex(b)
 }
 
 func main() {
 	af := flag.String("a", configs.AddressesFile, "file with deployed addresses")
 	cf := flag.String("c", configs.ChainNodeURL, "chain node url")
 	pf := flag.String("p", configs.ExtensionProxyURL, "extension proxy url")
-	instructionSenderF := flag.String("instructionSender", "", "instructionSender address")
+	instructionSenderF := flag.String("instructionSender", "", "instructionSender (RFQ) address")
+	teeF := flag.String("tee", "", "TEE machine address from the proxy /info (optional: sets it on the RFQ)")
+	apiKeyF := flag.String("apiKey", "", "DIRECT_API_KEY if the proxy requires one for /direct")
 	flag.Parse()
 
-	instructionSenderAddress := common.HexToAddress(*instructionSenderF)
+	rfqAddress := common.HexToAddress(*instructionSenderF)
 
-	testSupport, err := support.DefaultSupport(*af, *cf)
+	s, err := support.DefaultSupport(*af, *cf)
 	if err != nil {
 		fccutils.FatalWithCause(err)
 	}
+	seller := crypto.PubkeyToAddress(s.Prv.PublicKey)
 
-	// --- Generic: configure contract -----------------------------------------
-	logger.Infof("Setting extension ID on instruction sender...")
-	err = instrutils.SetExtensionId(testSupport, instructionSenderAddress)
-	if err != nil {
-		if strings.Contains(err.Error(), "already set") || strings.Contains(err.Error(), "Extension ID already set") {
-			logger.Infof("Extension ID already set on contract, continuing")
+	// --- 1. Bind the contract to its extension and its TEE -------------------
+	logger.Infof("Setting extension ID on the RFQ...")
+	if err := instrutils.SetExtensionId(s, rfqAddress); err != nil {
+		if strings.Contains(err.Error(), "already set") {
+			logger.Infof("Extension ID already set, continuing")
 		} else {
-			logger.Errorf("setExtensionId failed: %s", err)
 			fccutils.FatalWithCause(errors.Errorf(
-				"setExtensionId failed — is the extension registered? Check that pre-build.sh completed successfully. Error: %s", err))
+				"setExtensionId failed — did pre-build.sh complete? Error: %s", err))
+		}
+	}
+	if *teeF != "" {
+		logger.Infof("Registering TEE machine %s on the RFQ...", *teeF)
+		if err := instrutils.SetTeeAddress(s, rfqAddress, common.HexToAddress(*teeF)); err != nil {
+			fccutils.FatalWithCause(err)
 		}
 	}
 
-	// --- Test case 1: Send a SAY_HELLO instruction ---
-	logger.Infof("Sending SAY_HELLO instruction...")
-
-	payload, err := json.Marshal(map[string]interface{}{
-		"name": "World",
-	})
+	// --- 2. Open an RFQ: the seller escrows YT and sets a reserve -------------
+	fxrp, yt, err := instrutils.TokenAddresses()
 	if err != nil {
 		fccutils.FatalWithCause(err)
 	}
-
-	instructionId, _, err := instrutils.SendSayHello(testSupport, instructionSenderAddress, payload)
+	logger.Infof("Approving %d YT to the RFQ...", ytAmount)
+	if err := instrutils.TokenApprove(s, yt, rfqAddress, big.NewInt(ytAmount)); err != nil {
+		fccutils.FatalWithCause(err)
+	}
+	rfqID, err := instrutils.OpenRfq(s, rfqAddress, big.NewInt(ytAmount), big.NewInt(reserve))
 	if err != nil {
 		fccutils.FatalWithCause(err)
 	}
-	logger.Infof("Instruction sent. ID: %s", instructionId.Hex())
+	logger.Infof("RFQ %s open (seller %s, reserve %d)", rfqID, seller.Hex(), reserve)
 
+	// --- 3. Two sealed quotes, straight to the enclave ------------------------
+	// Both are signed by the same key here (the tooling key doubles as the market
+	// maker), so the higher price must win on price alone. A production run has
+	// one key per market maker; the enclave authenticates each independently.
+	deadline := time.Now().Add(time.Hour).Unix()
+	for _, price := range []int64{lowBid, highBid} {
+		if err := submitQuote(s, *pf, *apiKeyF, rfqAddress, rfqID, seller, price, deadline); err != nil {
+			fccutils.FatalWithCause(errors.Errorf("submitting the %d quote: %s", price, err))
+		}
+		logger.Infof("Quote %d accepted by the enclave (never touched the chain)", price)
+	}
+
+	// --- 4. Ask the enclave to run best execution -----------------------------
+	logger.Infof("Requesting settlement...")
+	instructionID, err := instrutils.RequestSettlement(s, rfqAddress, rfqID)
+	if err != nil {
+		fccutils.FatalWithCause(err)
+	}
+	logger.Infof("Instruction sent. ID: %s", instructionID.Hex())
 	time.Sleep(5 * time.Second)
 
-	err = verifyHelloResult(*pf, instructionId)
+	resp, err := fccutils.ActionResult(*pf, instructionID)
 	if err != nil {
 		fccutils.FatalWithCause(err)
 	}
-	logger.Infof("Test passed: SAY_HELLO instruction processed successfully")
+	result := resp.Result
+	if result.Status == 0 {
+		fccutils.FatalWithCause(errors.Errorf("the enclave refused to settle: %s", result.Log))
+	}
+	if result.Status == 2 {
+		fccutils.FatalWithCause(errors.New("settlement still pending after polling"))
+	}
+	if len(resp.Signature) == 0 {
+		fccutils.FatalWithCause(errors.New("no TEE signature on the result — is the node registered?"))
+	}
 
-	// --- Test case 2: Send a SAY_GOODBYE instruction ---
-	logger.Infof("Sending SAY_GOODBYE instruction...")
-
-	goodbyeInstructionId, _, err := instrutils.SendSayGoodbye(testSupport, instructionSenderAddress, "World", "heading out")
+	winner, price, err := decodeSettlement(result.Data)
 	if err != nil {
 		fccutils.FatalWithCause(err)
 	}
-	logger.Infof("Instruction sent. ID: %s", goodbyeInstructionId.Hex())
+	logger.Infof("Enclave signed: winner %s at %d", winner.Hex(), price)
+	if price.Int64() != highBid {
+		fccutils.FatalWithCause(errors.Errorf("best execution failed: expected %d, got %s", highBid, price))
+	}
 
-	time.Sleep(5 * time.Second)
-
-	err = verifyGoodbyeResult(*pf, goodbyeInstructionId)
+	// --- 5. Relay it. The contract verifies the signature before moving funds --
+	txHash, err := instrutils.Settle(
+		s, rfqAddress, result.Data, result.ID, string(result.SubmissionTag), result.Status, resp.Signature,
+	)
 	if err != nil {
 		fccutils.FatalWithCause(err)
 	}
-	logger.Infof("Test passed: SAY_GOODBYE instruction processed successfully")
-
+	logger.Infof("Settled on chain: %s", txHash.Hex())
+	logger.Infof("FXRP %s paid the seller; the losing quote never left the enclave.", fxrp.Hex())
 	logger.Infof("All tests passed.")
 }
 
-func verifyHelloResult(proxyURL string, instructionId common.Hash) error {
-	// --- Generic: poll proxy for result (do not modify) ---
-	actionResponse, err := fccutils.ActionResult(proxyURL, instructionId)
+// submitQuote signs a quote the way a market maker does and posts it to the
+// proxy's /direct endpoint, so the price is only ever seen inside the enclave.
+func submitQuote(
+	s *support.Support,
+	proxyURL, apiKey string,
+	rfq common.Address,
+	rfqID *big.Int,
+	mm common.Address,
+	price, deadline int64,
+) error {
+	digest, err := quoteDigest(s.ChainID, rfq, rfqID, mm, big.NewInt(ytAmount), big.NewInt(price), big.NewInt(deadline))
 	if err != nil {
 		return err
 	}
-	actionResult := actionResponse.Result
-
-	if actionResult.Status == 0 {
-		return errors.Errorf("instruction processing failed: %s", actionResult.Log)
-	}
-	if actionResult.Status == 2 {
-		return errors.New("instruction still pending after polling, expected completed")
-	}
-
-	if len(actionResult.Data) == 0 {
-		return errors.New("expected response data but got none")
-	}
-
-	var resp sayHelloResponse
-	err = json.Unmarshal(actionResult.Data, &resp)
+	signature, err := crypto.Sign(digest, s.Prv)
 	if err != nil {
-		return errors.Errorf("failed to unmarshal response: %s", err)
+		return errors.Errorf("signing the quote: %s", err)
 	}
 
-	if resp.Greeting == "" {
-		return errors.New("expected non-empty Greeting")
-	}
-	if resp.GreetingNumber < 1 {
-		return errors.Errorf("expected GreetingNumber >= 1, got %d", resp.GreetingNumber)
+	quote, err := json.Marshal(map[string]any{
+		"rfq":      strings.ToLower(rfq.Hex()),
+		"chainId":  s.ChainID.Int64(),
+		"rfqId":    rfqID.Int64(),
+		"mm":       strings.ToLower(mm.Hex()),
+		"price":    price,
+		"deadline": deadline,
+		"sig":      "0x" + common.Bytes2Hex(signature),
+	})
+	if err != nil {
+		return err
 	}
 
-	logger.Infof("Response data: %+v", resp)
+	body, err := json.Marshal(directAction{
+		OPType:    bytes32(opTypeRFQ),
+		OPCommand: bytes32(opCommandQuot),
+		Message:   "0x" + common.Bytes2Hex(quote),
+	})
+	if err != nil {
+		return err
+	}
 
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(proxyURL, "/")+"/direct", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return errors.Errorf("posting to the proxy: %s", err)
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return errors.Errorf("proxy returned %d: %s", resp.StatusCode, string(payload))
+	}
 	return nil
 }
 
-func verifyGoodbyeResult(proxyURL string, instructionId common.Hash) error {
-	actionResponse, err := fccutils.ActionResult(proxyURL, instructionId)
+// quoteDigest mirrors AgamaRfqInstructionSender.quoteDigest and the extension's
+// own encoding. The Solidity test replays a vector from the Python side, so all
+// three stay pinned to the same preimage.
+func quoteDigest(
+	chainID *big.Int,
+	rfq common.Address,
+	rfqID *big.Int,
+	mm common.Address,
+	ytAmt, price, deadline *big.Int,
+) ([]byte, error) {
+	stringT, _ := abi.NewType("string", "", nil)
+	uintT, _ := abi.NewType("uint256", "", nil)
+	addrT, _ := abi.NewType("address", "", nil)
+	args := abi.Arguments{
+		{Type: stringT}, {Type: uintT}, {Type: addrT}, {Type: uintT},
+		{Type: addrT}, {Type: uintT}, {Type: uintT}, {Type: uintT},
+	}
+	packed, err := args.Pack("AnchorQuote", chainID, rfq, rfqID, mm, ytAmt, price, deadline)
 	if err != nil {
-		return err
+		return nil, errors.Errorf("packing the quote digest: %s", err)
 	}
-	actionResult := actionResponse.Result
+	return crypto.Keccak256(packed), nil
+}
 
-	if actionResult.Status == 0 {
-		return errors.Errorf("instruction processing failed: %s", actionResult.Log)
+// decodeSettlement reads the winner and price out of the enclave's ActionResult.Data.
+func decodeSettlement(data []byte) (common.Address, *big.Int, error) {
+	uintT, _ := abi.NewType("uint256", "", nil)
+	addrT, _ := abi.NewType("address", "", nil)
+	args := abi.Arguments{
+		{Type: addrT}, {Type: uintT}, {Type: addrT}, {Type: addrT},
+		{Type: uintT}, {Type: uintT}, {Type: uintT},
 	}
-	if actionResult.Status == 2 {
-		return errors.New("instruction still pending after polling, expected completed")
-	}
-
-	if len(actionResult.Data) == 0 {
-		return errors.New("expected response data but got none")
-	}
-
-	var resp sayGoodbyeResponse
-	err = json.Unmarshal(actionResult.Data, &resp)
+	values, err := args.Unpack(data)
 	if err != nil {
-		return errors.Errorf("failed to unmarshal response: %s", err)
+		return common.Address{}, nil, errors.Errorf("decoding the settlement: %s", err)
 	}
-
-	if resp.Farewell == "" {
-		return errors.New("expected non-empty Farewell")
+	if len(values) != 7 {
+		return common.Address{}, nil, errors.Errorf("settlement has %d fields, expected 7", len(values))
 	}
-	if resp.FarewellNumber < 1 {
-		return errors.Errorf("expected FarewellNumber >= 1, got %d", resp.FarewellNumber)
+	winner, ok := values[3].(common.Address)
+	if !ok {
+		return common.Address{}, nil, errors.New("settlement winner is not an address")
 	}
-
-	logger.Infof("Response data: %+v", resp)
-
-	return nil
+	price, ok := values[5].(*big.Int)
+	if !ok {
+		return common.Address{}, nil, errors.New("settlement price is not a uint256")
+	}
+	return winner, price, nil
 }

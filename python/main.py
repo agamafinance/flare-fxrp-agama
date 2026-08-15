@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app.config import VERSION  # noqa: E402
-from app.handlers import register, report_state  # noqa: E402
+from app.handlers import register, report_state, set_sign_port  # noqa: E402
 from base.server import Server  # noqa: E402
 
 
@@ -27,6 +27,9 @@ def main() -> None:
     # Defaults match go/internal/config/config.go.
     ext_port = os.environ.get("EXTENSION_PORT", "8080")
     sign_port = os.environ.get("SIGN_PORT", "9090")
+
+    # ECIES-sealed quotes are decrypted through the node's signing API.
+    set_sign_port(sign_port)
 
     srv = Server(ext_port, sign_port, VERSION, register, report_state)
     srv.listen_and_serve()

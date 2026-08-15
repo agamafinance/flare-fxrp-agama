@@ -77,7 +77,7 @@ if [[ "$RUN_ALL" == "true" ]]; then
         run_language "$lang" || FAILED_LANGS+=("$lang")
     done < <(list_languages "$PROJECT_DIR")
 else
-    lang="${TARGET:-${LANGUAGE:-go}}"
+    lang="${TARGET:-${LANGUAGE:-python}}"
     run_language "$lang" || FAILED_LANGS+=("$lang")
 fi
 
