@@ -1,0 +1,35 @@
+# C-chain indexer for the extension proxy.
+#
+# The proxy needs the FSP data — signing policies, voter registrations, recent
+# voting rounds — to verify what Flare's data providers send it. Flare issues
+# credentials to a hosted indexer on request; this config runs our own instead,
+# so the deployment has no dependency on someone else's database.
+#
+# FSP mode with history_epochs = 0 indexes only the last ~15 minutes of blocks
+# and backfills FSP metadata from two reward epochs back, so a cold start is
+# minutes rather than a full chain sync.
+
+[indexer]
+mode = "fsp"
+history_epochs = 0
+rpc_concurrency = 20      # conservative: this is Flare's shared public endpoint
+batch_size = 1000
+log_range = 1000          # the public RPC's eth_getLogs cap
+new_block_check_millis = 1000
+confirmations = 1
+
+[logger]
+level = "INFO"
+console = true
+
+[chain]
+node_url = "https://coston2-api.flare.network/ext/C/rpc"
+chain_type = 1            # Avalanche-based
+
+[db]
+host = "indexer-db"
+port = 3306
+database = "flare_ftso_indexer"
+username = "indexer"
+password = "indexer"
+log_queries = false

@@ -168,6 +168,27 @@ def parse_action(raw: dict[str, Any]) -> Action:
     )
 
 
+# ActionData.type values (tee-node pkg/types/actions.go).
+INSTRUCTION_ACTION = "instruction"
+DIRECT_ACTION = "direct"
+
+
+def parse_direct_instruction(raw: dict[str, Any]) -> DataFixed:
+    """Adapt a DirectInstruction into the DataFixed the handler contract expects.
+
+    A direct action reaches the extension as {"opType", "opCommand", "message"} —
+    the DirectInstruction tee-node received on POST /direct, forwarded verbatim.
+    There is no instruction id, no cosigners and no timestamp: nothing on chain
+    triggered it. The payload lives under `message`, not `originalMessage`.
+    """
+    return DataFixed(
+        instruction_id="",
+        op_type=raw["opType"],
+        op_command=raw.get("opCommand", ""),
+        original_message=raw.get("message") or "0x",
+    )
+
+
 def parse_data_fixed(raw: dict[str, Any]) -> DataFixed:
     return DataFixed(
         instruction_id=raw.get("instructionId", ""),

@@ -67,6 +67,8 @@ Two channels in, one out — the shape every FCE has:
 | `python/app/chain.py` | reads performed inside the enclave: RFQ terms, FTSOv2, Secure RNG, solvency |
 | `test/AgamaRfq.t.sol` | the contract's guarantees, including a forged and a tampered settlement |
 | `tools/cmd/run-test` | one full round trip: open, two sealed quotes, settle, relay |
+| `scripts/start-indexer.sh` | our own C-chain indexer, so the proxy needs no third-party database |
+| `scripts/deploy-gcp.sh` | the real deployment: Confidential Space VM for the extension, ordinary VM for the rest |
 
 ## Run the tests
 
@@ -81,24 +83,33 @@ None of them need a chain, a TEE, or Docker.
 
 ## Deploy to Coston2
 
-Prerequisites: Docker, Go 1.25.1+, Foundry, `jq`, a funded Coston2 key
-([faucet](https://faucet.flare.network/coston2)), a publicly reachable HTTPS tunnel to port `6674`,
-and **indexer database credentials for the extension proxy** — those are issued on request by
-[Flare support](https://flare.network/resources/technical-support).
+Prerequisites: Docker, Go 1.25.1+, Foundry, `jq`, and a funded Coston2 key
+([faucet](https://faucet.flare.network/coston2)).
+
+**No Flare credentials needed.** The extension proxy reads FSP data — signing policies, voter
+registrations, recent voting rounds — from a C-chain indexer database. Flare issues credentials to a
+hosted one on request; `scripts/start-indexer.sh` runs the same
+[open-source indexer](https://github.com/flare-foundation/flare-system-c-chain-indexer) locally
+instead. In FSP mode with `history_epochs = 0` it indexes the last ~15 minutes of blocks and
+backfills FSP metadata two reward epochs back, so a cold start is minutes, not a chain sync.
 
 ```bash
-cp .env.example .env            # fill in the keys and FXRP_ADDR / YT_ADDR
-./scripts/pre-build.sh          # deploy the RFQ, register the extension
+cp .env.example .env            # keys, FXRP_ADDR / YT_ADDR
+./scripts/pre-build.sh          # deploy the RFQ, register the extension on chain
+./scripts/start-indexer.sh      # our own C-chain indexer + its database
 ./scripts/start-services.sh     # redis + ext-proxy + the extension
 ./scripts/post-build.sh         # whitelist the code hash, register the TEE machine
 ./scripts/test.sh               # full sealed-bid round trip
 ```
 
-For real attestation the image must be built with `MODE=0` and run on a GCP Confidential Space VM
-(`SIMULATED_TEE=false`); FTDC rejects simulated attestation. Confirm before registering:
+That local run uses simulated attestation, which is enough to exercise the whole pipeline but
+**FTDC rejects it**, so machine registration needs real hardware. `scripts/deploy-gcp.sh` does that
+in one shot: it builds the image with `MODE=0`, pushes it by digest, puts redis, the proxy and the
+indexer on an ordinary VM, and runs the extension — and only the extension — on a GCP Confidential
+Space VM (AMD SEV). Confirm what actually came up before registering it:
 
 ```bash
-curl -s "$EXT_PROXY_URL/info" | jq '.machineData | {extensionId, codeHash, platform}'
+./scripts/deploy-gcp.sh --info
 # platform GCP_AMD_SEV, and a codeHash that is NOT 0x194844cf… (that one is simulated)
 ```
 
@@ -115,5 +126,9 @@ Full lifecycle and the platform traps: [`docs/deployment-steps.md`](docs/deploym
   tractable.
 - **Best execution covers the quotes the enclave holds.** A market maker that never reaches the proxy
   is not in the auction. The seller's on-chain reserve bounds the downside.
+- **The Python framework did not handle direct actions.** tee-node forwards a direct action with the
+  `DirectInstruction` envelope, where the payload sits under `message` rather than `originalMessage`;
+  the scaffold's `base/server.py` parsed it as a `DataFixed`, which succeeds and yields an empty
+  payload. Fixed here (`parse_direct_instruction`) and pinned by tests — worth upstreaming.
 - **`teeAddress` is owner-set.** It should match a machine registered for this extension; the minimal
   registry interface cannot enumerate them, so the binding is checked by hand at deploy time.

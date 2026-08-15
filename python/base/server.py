@@ -16,6 +16,7 @@ from typing import Any, Optional
 
 from .encoding import bytes32_hex_to_string, hex_to_bytes, string_to_bytes32_hex
 from .types import (
+    DIRECT_ACTION,
     ActionResult,
     Framework,
     RegisterFunc,
@@ -23,6 +24,7 @@ from .types import (
     StateResponse,
     parse_action,
     parse_data_fixed,
+    parse_direct_instruction,
 )
 
 logger = logging.getLogger(__name__)
@@ -125,10 +127,20 @@ class Server:
         except ValueError as e:
             return 400, {"error": f"invalid hex in message: {e}"}
 
+        # Two action shapes reach an extension, and they are NOT the same envelope.
+        # An on-chain instruction carries a DataFixed. A direct action (POST /direct
+        # on the proxy) carries the DirectInstruction verbatim — tee-node forwards the
+        # raw action, and its `message` field holds the payload where DataFixed would
+        # say `originalMessage`. Parsing a direct action as a DataFixed "succeeds" and
+        # silently hands the handler an empty payload, so the shape is decided here.
         try:
-            df = parse_data_fixed(json.loads(msg_bytes))
+            raw_message = json.loads(msg_bytes)
+            if action.data.type == DIRECT_ACTION:
+                df = parse_direct_instruction(raw_message)
+            else:
+                df = parse_data_fixed(raw_message)
         except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
-            return 400, {"error": f"invalid DataFixed JSON in message: {e}"}
+            return 400, {"error": f"invalid {action.data.type or 'instruction'} JSON in message: {e}"}
 
         handler = self.framework.lookup(df.op_type, df.op_command)
         if handler is None:

@@ -105,8 +105,19 @@ func main() {
 	// one key per market maker; the enclave authenticates each independently.
 	deadline := time.Now().Add(time.Hour).Unix()
 	for _, price := range []int64{lowBid, highBid} {
-		if err := submitQuote(s, *pf, *apiKeyF, rfqAddress, rfqID, seller, price, deadline); err != nil {
+		actionID, err := submitQuote(s, *pf, *apiKeyF, rfqAddress, rfqID, seller, price, deadline)
+		if err != nil {
 			fccutils.FatalWithCause(errors.Errorf("submitting the %d quote: %s", price, err))
+		}
+		// The proxy accepts the action before the enclave has judged the quote, so
+		// poll the result: a quote the enclave rejects must fail here, not silently
+		// go missing from the auction.
+		quoteResp, err := fccutils.ActionResult(*pf, actionID)
+		if err != nil {
+			fccutils.FatalWithCause(errors.Errorf("polling the %d quote: %s", price, err))
+		}
+		if quoteResp.Result.Status != 1 {
+			fccutils.FatalWithCause(errors.Errorf("the enclave rejected the %d quote: %s", price, quoteResp.Result.Log))
 		}
 		logger.Infof("Quote %d accepted by the enclave (never touched the chain)", price)
 	}
@@ -165,14 +176,14 @@ func submitQuote(
 	rfqID *big.Int,
 	mm common.Address,
 	price, deadline int64,
-) error {
+) (common.Hash, error) {
 	digest, err := quoteDigest(s.ChainID, rfq, rfqID, mm, big.NewInt(ytAmount), big.NewInt(price), big.NewInt(deadline))
 	if err != nil {
-		return err
+		return common.Hash{}, err
 	}
 	signature, err := crypto.Sign(digest, s.Prv)
 	if err != nil {
-		return errors.Errorf("signing the quote: %s", err)
+		return common.Hash{}, errors.Errorf("signing the quote: %s", err)
 	}
 
 	quote, err := json.Marshal(map[string]any{
@@ -185,7 +196,7 @@ func submitQuote(
 		"sig":      "0x" + common.Bytes2Hex(signature),
 	})
 	if err != nil {
-		return err
+		return common.Hash{}, err
 	}
 
 	body, err := json.Marshal(directAction{
@@ -194,12 +205,12 @@ func submitQuote(
 		Message:   "0x" + common.Bytes2Hex(quote),
 	})
 	if err != nil {
-		return err
+		return common.Hash{}, err
 	}
 
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(proxyURL, "/")+"/direct", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return common.Hash{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if apiKey != "" {
@@ -208,14 +219,24 @@ func submitQuote(
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return errors.Errorf("posting to the proxy: %s", err)
+		return common.Hash{}, errors.Errorf("posting to the proxy: %s", err)
 	}
 	defer resp.Body.Close()
 	payload, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return errors.Errorf("proxy returned %d: %s", resp.StatusCode, string(payload))
+		return common.Hash{}, errors.Errorf("proxy returned %d: %s", resp.StatusCode, string(payload))
 	}
-	return nil
+
+	// The proxy echoes the queued action; its id is what the result is keyed by.
+	var queued struct {
+		Data struct {
+			ID common.Hash `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(payload, &queued); err != nil {
+		return common.Hash{}, errors.Errorf("decoding the queued action: %s", err)
+	}
+	return queued.Data.ID, nil
 }
 
 // quoteDigest mirrors AgamaRfqInstructionSender.quoteDigest and the extension's

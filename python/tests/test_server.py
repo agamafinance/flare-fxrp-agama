@@ -179,3 +179,52 @@ class TestStateWireFormat:
         assert body["state"]["quotesHeld"] == 1
         # the book itself never appears in /state
         assert RFQ not in json.dumps(body["state"])
+
+
+def build_direct_action(op_type="RFQ", op_command="QUOTE", original=b"", action_id=None):
+    """Build a POST /action body in the shape tee-node forwards for a direct action.
+
+    Not the same envelope as an instruction: the payload sits under `message`,
+    and there is no instruction id, no cosigners, no timestamp.
+    """
+    direct = {
+        "opType": string_to_bytes32_hex(op_type),
+        "opCommand": string_to_bytes32_hex(op_command),
+        "message": bytes_to_hex(original),
+    }
+    return json.dumps(
+        {
+            "data": {
+                "id": action_id or "0x" + "33" * 32,
+                "type": "direct",
+                "submissionTag": "submit",
+                "message": bytes_to_hex(json.dumps(direct).encode("utf-8")),
+            },
+            "additionalVariableMessages": [],
+            "timestamps": [],
+            "additionalActionData": "0x",
+            "signatures": [],
+        }
+    ).encode("utf-8")
+
+
+class TestDirectAction:
+    """Sealed quotes arrive this way, so the envelope must be read as a
+    DirectInstruction. Read as a DataFixed it parses cleanly and yields an empty
+    payload — the handler would then reject every authentic quote."""
+
+    def test_payload_reaches_the_handler(self, srv):
+        status, body = srv.handle_request("POST", "/action", build_direct_action(original=a_quote()))
+        assert status == 200
+        assert body["status"] == 1, body["log"]
+        assert json.loads(hex_to_bytes(body["data"]))["accepted"] is True
+
+    def test_routing_still_applies(self, srv):
+        status, _ = srv.handle_request(
+            "POST", "/action", build_direct_action(op_command="NOPE", original=a_quote())
+        )
+        assert status == 501
+
+    def test_a_direct_action_with_no_payload_is_a_handler_error(self, srv):
+        _status, body = srv.handle_request("POST", "/action", build_direct_action(original=b""))
+        assert body["status"] == 0

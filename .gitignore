@@ -61,3 +61,5 @@ DEPLOYMENT.md
 
 config/**/*.log
 config/register-tee.state
+# Self-hosted C-chain indexer source (cloned by scripts/start-indexer.sh)
+.indexer-src/

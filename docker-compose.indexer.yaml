@@ -1,0 +1,41 @@
+# Self-hosted C-chain indexer for the extension proxy.
+#
+# Started by scripts/start-indexer.sh into the SAME compose project as the
+# extension stack, so ext-proxy reaches `indexer-db` by service name.
+services:
+  indexer-db:
+    image: mysql:8
+    command: --mysql-native-password=ON
+    environment:
+      MYSQL_ROOT_PASSWORD: indexer
+      MYSQL_DATABASE: flare_ftso_indexer
+      MYSQL_USER: indexer
+      MYSQL_PASSWORD: indexer
+    ports:
+      - "${INDEXER_DB_BIND:-127.0.0.1:3307}:3306"
+    volumes:
+      - indexer-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uindexer", "-pindexer"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  c-chain-indexer:
+    build:
+      # Cloned by scripts/start-indexer.sh; gitignored, pinned by INDEXER_REF.
+      context: ./.indexer-src
+    volumes:
+      - ./config/indexer/config.coston2.toml:/app/config.toml:ro
+    restart: unless-stopped
+    depends_on:
+      indexer-db:
+        condition: service_healthy
+
+volumes:
+  indexer-data:
+
+networks:
+  default:
+    name: ${COMPOSE_NETWORK:-extension-scaffold-coston2}
+    external: false
