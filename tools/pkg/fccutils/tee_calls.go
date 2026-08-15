@@ -19,7 +19,11 @@ import (
 	"github.com/pkg/errors"
 )
 
-const repeats = 15
+// 15 repeats at 2s is a 30-second window. That is fine for an action our own TEE
+// answers, but the FTDC availability check resolves to an FDC proof, and an FDC
+// round on Coston2 is 90 seconds before it is even finalized — so registration
+// always timed out on a perfectly healthy TEE. Poll long enough to cover a round.
+const repeats = 180
 
 func TeeInfo(nodeURL string) (*types.SignedTeeInfoResponse, error) {
 	result, err := http.Get(nodeURL + "/info")

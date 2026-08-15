@@ -30,14 +30,14 @@ ADDRESSES_FILE="${ADDRESSES_FILE:-./config/coston2/deployed-addresses.json}"
 [[ "$ADDRESSES_FILE" != /* ]] && ADDRESSES_FILE="$PROJECT_DIR/$ADDRESSES_FILE"
 LOCAL_INFO="${LOCAL_INFO_URL:-http://localhost:6674/info}"
 
-FTM=$(python -c "
+FTM=$(python3 -c "
 import json, sys
 entries = json.load(open(sys.argv[1]))
 print(next(e['address'] for e in entries if e['name'] == 'FlareTeeManager'))
 " "$ADDRESSES_FILE")
 
 # teeId = the EVM address of the TEE's secp256k1 pubkey (keccak(X||Y)[12:]).
-XY=$(curl -sf -m 10 "$LOCAL_INFO" | python -c "
+XY=$(curl -sf -m 10 "$LOCAL_INFO" | python3 -c "
 import json,sys
 k = json.load(sys.stdin)['teeInfo']['publicKey']
 print(k['x'][2:] + k['y'][2:])

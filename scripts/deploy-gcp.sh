@@ -177,10 +177,13 @@ step "Confidential Space VM (AMD SEV)"
 # --confidential-compute-type=SEV: FCC attests GCP_AMD_SEV, not TDX.
 # The launch policy only accepts the env vars the image whitelists — see the
 # tee.launch_policy.allow_env_override label in python/Dockerfile.
-if gcloud compute instances describe "$TEE_VM" --zone="$ZONE" >/dev/null 2>&1; then
-    log "deleting the previous TEE VM (a relaunch mints a new teeId anyway)"
-    gcloud compute instances delete "$TEE_VM" --zone="$ZONE" --quiet
-fi
+# Delete any previous enclave, wherever it landed: capacity moves it between zones,
+# so looking only in $ZONE leaves one behind and the next create fails on the name.
+while read -r name zone; do
+    [[ -n "$name" ]] || continue
+    log "deleting the previous TEE VM in $zone (a relaunch mints a new teeId anyway)"
+    gcloud compute instances delete "$name" --zone="$zone" --quiet
+done < <(gcloud compute instances list --filter="name=$TEE_VM" --format='value(name,zone.basename())')
 
 # Confidential VM shapes run out. The support VM is reachable on the internal
 # network across every zone of its region, so falling back to another zone costs
