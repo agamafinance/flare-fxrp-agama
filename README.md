@@ -126,13 +126,15 @@ Full lifecycle and the platform traps: [`docs/deployment-steps.md`](docs/deploym
 | Code hash (whitelisted on chain) | `0x9f27d48efbbb70ae5593b72aff51c7ba39ced995614c5ed491112d5baf46ec28` |
 | Traded pair | FXRP `0xb23b0daDa…1E3A6` · YT `0x1592f5cd4…E0B4D` |
 
-Verify the registration yourself:
+Check the whole deployment against the chain in one command:
 
 ```bash
-cast call 0x1a9C4A0f9D76c0b1D91d22E24E573a9b377618aE \
-  'getTeeExtensionInstructionsSender(uint256)(address)' 66295 \
-  --rpc-url https://coston2-api.flare.network/ext/C/rpc
+./scripts/verify-registration.sh
 ```
+
+It prints the live node's view beside the `FlareTeeManager` record — machine id, proxy id, URL,
+platform, code hash, instruction sender — and the machine status (2 = production). When
+registration stalls, it says in one screen whether the fault is here or upstream.
 
 **Not yet promoted to production.** `register-tee`'s last step needs an FTDC availability
 proof: the request goes on chain, policy consistency checks out (signing policy 5941 = reward
