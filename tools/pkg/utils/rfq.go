@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/pkg/errors"
 )
 
@@ -102,6 +103,123 @@ func TokenApprove(s *support.Support, token, spender common.Address, amount *big
 		return errors.Errorf("approve failed: %s", err)
 	}
 	return waitOK(s, tx, "approve")
+}
+
+// TokenMint mints demo tokens to `to`. Only the test FXRP has an open mint; the
+// YT is minted by the splitter alone, so YT is obtained by splitting FXRP.
+func TokenMint(s *support.Support, token, to common.Address, amount *big.Int) error {
+	parsed, err := abi.JSON(strings.NewReader(erc20ABI))
+	if err != nil {
+		return errors.Errorf("bad ERC20 ABI: %s", err)
+	}
+	opts, err := transactor(s)
+	if err != nil {
+		return err
+	}
+	c := bind.NewBoundContract(token, parsed, s.ChainClient, s.ChainClient, s.ChainClient)
+	tx, err := c.Transact(opts, "mint", to, amount)
+	if err != nil {
+		return errors.Errorf("mint failed: %s", err)
+	}
+	return waitOK(s, tx, "mint")
+}
+
+// TokenBalance reads an ERC20 balance.
+func TokenBalance(s *support.Support, token, owner common.Address) (*big.Int, error) {
+	parsed, err := abi.JSON(strings.NewReader(erc20ABI))
+	if err != nil {
+		return nil, errors.Errorf("bad ERC20 ABI: %s", err)
+	}
+	c := bind.NewBoundContract(token, parsed, s.ChainClient, s.ChainClient, s.ChainClient)
+	var out []any
+	if err := c.Call(&bind.CallOpts{Context: context.Background()}, &out, "balanceOf", owner); err != nil {
+		return nil, errors.Errorf("balanceOf failed: %s", err)
+	}
+	return out[0].(*big.Int), nil
+}
+
+// FundGas sends native coin to `to` when its balance is below `min`. A market
+// maker needs gas of its own: the premium leaves its account at settlement, so
+// it must approve the RFQ itself.
+func FundGas(s *support.Support, to common.Address, min, amount *big.Int) error {
+	bal, err := s.ChainClient.BalanceAt(context.Background(), to, nil)
+	if err != nil {
+		return errors.Errorf("reading balance of %s: %s", to, err)
+	}
+	if bal.Cmp(min) >= 0 {
+		return nil
+	}
+	from := crypto.PubkeyToAddress(s.Prv.PublicKey)
+	nonce, err := s.ChainClient.PendingNonceAt(context.Background(), from)
+	if err != nil {
+		return errors.Errorf("nonce: %s", err)
+	}
+	tip, err := s.ChainClient.SuggestGasTipCap(context.Background())
+	if err != nil {
+		return errors.Errorf("gas tip: %s", err)
+	}
+	head, err := s.ChainClient.HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		return errors.Errorf("head: %s", err)
+	}
+	feeCap := new(big.Int).Add(tip, new(big.Int).Mul(head.BaseFee, big.NewInt(2)))
+	tx := types.NewTx(&types.DynamicFeeTx{
+		ChainID: s.ChainID, Nonce: nonce, To: &to, Value: amount,
+		Gas: 21000, GasTipCap: tip, GasFeeCap: feeCap,
+	})
+	signed, err := types.SignTx(tx, types.LatestSignerForChainID(s.ChainID), s.Prv)
+	if err != nil {
+		return errors.Errorf("signing the funding tx: %s", err)
+	}
+	if err := s.ChainClient.SendTransaction(context.Background(), signed); err != nil {
+		return errors.Errorf("sending gas to %s: %s", to, err)
+	}
+	return waitOK(s, signed, "fund gas")
+}
+
+// splitterABI is the slice of the YT/splitter pair this tooling needs. YT has no
+// open mint: it exists only as the yield half of a split FXRP position, so the
+// only way to obtain it is to lock FXRP in the splitter.
+const splitterABI = `[
+ {"name":"splitter","type":"function","stateMutability":"view","inputs":[],"outputs":[{"type":"address"}]},
+ {"name":"split","type":"function","stateMutability":"nonpayable","inputs":[{"type":"uint256"}],"outputs":[]}
+]`
+
+// YtSplitter reads the splitter the YT token accepts mints from. Read from the
+// token rather than configured, so it cannot drift from the deployment.
+func YtSplitter(s *support.Support, yt common.Address) (common.Address, error) {
+	parsed, err := abi.JSON(strings.NewReader(splitterABI))
+	if err != nil {
+		return common.Address{}, errors.Errorf("bad splitter ABI: %s", err)
+	}
+	c := bind.NewBoundContract(yt, parsed, s.ChainClient, s.ChainClient, s.ChainClient)
+	var out []any
+	if err := c.Call(&bind.CallOpts{Context: context.Background()}, &out, "splitter"); err != nil {
+		return common.Address{}, errors.Errorf("reading the YT splitter: %s", err)
+	}
+	return out[0].(common.Address), nil
+}
+
+// SplitFxrp locks `amount` of FXRP in the splitter, minting the caller equal
+// amounts of principal and yield tokens.
+func SplitFxrp(s *support.Support, splitter, fxrp common.Address, amount *big.Int) error {
+	if err := TokenApprove(s, fxrp, splitter, amount); err != nil {
+		return err
+	}
+	parsed, err := abi.JSON(strings.NewReader(splitterABI))
+	if err != nil {
+		return errors.Errorf("bad splitter ABI: %s", err)
+	}
+	opts, err := transactor(s)
+	if err != nil {
+		return err
+	}
+	c := bind.NewBoundContract(splitter, parsed, s.ChainClient, s.ChainClient, s.ChainClient)
+	tx, err := c.Transact(opts, "split", amount)
+	if err != nil {
+		return errors.Errorf("split failed: %s", err)
+	}
+	return waitOK(s, tx, "split")
 }
 
 // TokenAllowance reads an ERC20 allowance.

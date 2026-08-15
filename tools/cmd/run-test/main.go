@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -35,6 +36,12 @@ const (
 	reserve  = 2_000_000   // 2 FXRP
 	lowBid   = 4_000_000   // 4 FXRP
 	highBid  = 6_000_000   // 6 FXRP — this one must win
+)
+
+// The market maker only ever sends approvals, so a small float is plenty.
+var (
+	gasFloor = new(big.Int).Mul(big.NewInt(1), big.NewInt(1e18))
+	gasTopUp = new(big.Int).Mul(big.NewInt(3), big.NewInt(1e18))
 )
 
 // directAction is the body the proxy accepts on /direct: the same (opType,
@@ -90,6 +97,34 @@ func main() {
 	if err != nil {
 		fccutils.FatalWithCause(err)
 	}
+	// Each run escrows YT that settlement hands to the winner, so the seller's
+	// balance falls by ytAmount every time. Top it up here: YT has no open mint,
+	// it only exists as the yield half of split FXRP, so mint FXRP and split it.
+	sellerYt, err := instrutils.TokenBalance(s, yt, seller)
+	if err != nil {
+		fccutils.FatalWithCause(err)
+	}
+	if sellerYt.Cmp(big.NewInt(ytAmount)) < 0 {
+		short := new(big.Int).Sub(big.NewInt(ytAmount), sellerYt)
+		logger.Infof("Seller holds %s YT, needs %d — splitting %s FXRP", sellerYt, ytAmount, short)
+		sellerFxrp, err := instrutils.TokenBalance(s, fxrp, seller)
+		if err != nil {
+			fccutils.FatalWithCause(err)
+		}
+		if sellerFxrp.Cmp(short) < 0 {
+			if err := instrutils.TokenMint(s, fxrp, seller, new(big.Int).Mul(short, big.NewInt(2))); err != nil {
+				fccutils.FatalWithCause(err)
+			}
+		}
+		splitter, err := instrutils.YtSplitter(s, yt)
+		if err != nil {
+			fccutils.FatalWithCause(err)
+		}
+		if err := instrutils.SplitFxrp(s, splitter, fxrp, short); err != nil {
+			fccutils.FatalWithCause(err)
+		}
+	}
+
 	logger.Infof("Approving %d YT to the RFQ...", ytAmount)
 	if err := instrutils.TokenApprove(s, yt, rfqAddress, big.NewInt(ytAmount)); err != nil {
 		fccutils.FatalWithCause(err)
@@ -100,13 +135,45 @@ func main() {
 	}
 	logger.Infof("RFQ %s open (seller %s, reserve %d)", rfqID, seller.Hex(), reserve)
 
+	// --- 2b. A market maker distinct from the seller --------------------------
+	// The enclave refuses a quote signed by the RFQ's own seller, so the tooling
+	// key cannot play both roles. Derive a second identity from it, so runs are
+	// reproducible and no extra secret is needed, then give it what settlement
+	// will demand of it: gas to approve with, FXRP to pay the premium, and the
+	// approval itself — settle() moves the premium out of the winner's account.
+	mmPrv, err := marketMakerKey(s.Prv)
+	if err != nil {
+		fccutils.FatalWithCause(err)
+	}
+	mmAddr := crypto.PubkeyToAddress(mmPrv.PublicKey)
+	mmSupport := *s
+	mmSupport.Prv = mmPrv
+	logger.Infof("Market maker %s (derived from the tooling key)", mmAddr.Hex())
+
+	if err := instrutils.FundGas(s, mmAddr, gasFloor, gasTopUp); err != nil {
+		fccutils.FatalWithCause(err)
+	}
+	mmFxrp, err := instrutils.TokenBalance(s, fxrp, mmAddr)
+	if err != nil {
+		fccutils.FatalWithCause(err)
+	}
+	if mmFxrp.Cmp(big.NewInt(highBid)) < 0 {
+		logger.Infof("Minting %d FXRP to the market maker...", highBid*4)
+		if err := instrutils.TokenMint(s, fxrp, mmAddr, big.NewInt(highBid*4)); err != nil {
+			fccutils.FatalWithCause(err)
+		}
+	}
+	if err := instrutils.TokenApprove(&mmSupport, fxrp, rfqAddress, big.NewInt(highBid)); err != nil {
+		fccutils.FatalWithCause(err)
+	}
+
 	// --- 3. Two sealed quotes, straight to the enclave ------------------------
-	// Both are signed by the same key here (the tooling key doubles as the market
-	// maker), so the higher price must win on price alone. A production run has
-	// one key per market maker; the enclave authenticates each independently.
+	// Both come from the same market maker here, so the higher price must win on
+	// price alone. A production run has one key per market maker; the enclave
+	// authenticates each independently and refuses any quote signed by the seller.
 	deadline := time.Now().Add(time.Hour).Unix()
 	for _, price := range []int64{lowBid, highBid} {
-		actionID, err := submitQuote(s, *pf, *apiKeyF, rfqAddress, rfqID, seller, price, deadline)
+		actionID, err := submitQuote(s, mmPrv, *pf, *apiKeyF, rfqAddress, rfqID, mmAddr, price, deadline)
 		if err != nil {
 			fccutils.FatalWithCause(errors.Errorf("submitting the %d quote: %s", price, err))
 		}
@@ -206,10 +273,23 @@ func directResult(proxyURL string, actionID common.Hash) (uint8, string, error) 
 	return 0, "", lastErr
 }
 
+// marketMakerKey derives the test's market-maker identity from the tooling key.
+// Deterministic so a rerun reuses the same funded account instead of stranding
+// gas in a fresh one each time.
+func marketMakerKey(seller *ecdsa.PrivateKey) (*ecdsa.PrivateKey, error) {
+	seed := crypto.Keccak256(crypto.FromECDSA(seller), []byte("agama-rfq-market-maker"))
+	k, err := crypto.ToECDSA(seed)
+	if err != nil {
+		return nil, errors.Errorf("deriving the market-maker key: %s", err)
+	}
+	return k, nil
+}
+
 // submitQuote signs a quote the way a market maker does and posts it to the
 // proxy's /direct endpoint, so the price is only ever seen inside the enclave.
 func submitQuote(
 	s *support.Support,
+	signer *ecdsa.PrivateKey,
 	proxyURL, apiKey string,
 	rfq common.Address,
 	rfqID *big.Int,
@@ -220,7 +300,7 @@ func submitQuote(
 	if err != nil {
 		return common.Hash{}, err
 	}
-	signature, err := crypto.Sign(digest, s.Prv)
+	signature, err := crypto.Sign(digest, signer)
 	if err != nil {
 		return common.Hash{}, errors.Errorf("signing the quote: %s", err)
 	}

@@ -96,6 +96,19 @@ if ! curl -sf -o /dev/null "$EXT_PROXY_URL/info" 2>/dev/null; then
 fi
 log "Extension proxy is reachable"
 
+# The TEE key lives only in the enclave's memory, so every restart of the
+# Confidential Space VM produces a new machine address. Derive it from the live
+# proxy rather than trusting whatever the contract was last told: a stale
+# teeAddress makes settle() revert with "bad TEE signature" long after the
+# confidential part of the run has already succeeded.
+LIVE_TEE=$(curl -sf -m 20 "$EXT_PROXY_URL/info" | python3 -c "
+import sys, json
+k = json.load(sys.stdin)['teeInfo']['publicKey']
+print(k['x'][2:] + k['y'][2:])
+") || die "could not read the TEE public key from $EXT_PROXY_URL/info"
+LIVE_TEE=0x$(cast keccak "0x$LIVE_TEE" | tail -c 41)
+log "Live TEE machine:   $LIVE_TEE"
+
 # --- Run test ---
 step 1 "Run extension tests"
 cd "$PROJECT_DIR/tools"
@@ -104,6 +117,7 @@ go run ./cmd/run-test \
     -c "$CHAIN_URL" \
     -p "$EXT_PROXY_URL" \
     -instructionSender "$INSTRUCTION_SENDER" \
+    -tee "$LIVE_TEE" \
     || die "Test failed"
 
 echo ""
