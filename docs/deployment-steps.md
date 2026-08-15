@@ -268,6 +268,26 @@ crane copy <src>@sha256:<digest> <dst>@sha256:<digest>
 And `CHAIN_ID` must be set — unset leaves `chainID=0` and every signature comes back
 empty (`signature must be 65 bytes, got 0`).
 
+### Registering across a reward-epoch boundary
+
+Flare announces the next signing policy roughly two hours before its epoch starts. A
+node or proxy initialising inside that window loads the *announced* policy and nothing
+for the epoch actually running, so instructions stamped with the current epoch are
+refused:
+
+```
+main queue: processing action 0x… error: policy of the given reward epoch not in the storage
+```
+
+The node still answers — with `status: 0` and empty data. `/action/result/<id>` returns
+200, so anything that checks only the HTTP code reads this as success while the
+availability proof never arrives. `register-tee` now decodes the body and requires
+`status == 1`, surfacing the node's own `log` line.
+
+Two ways out: wait for the announced epoch to start (`getCurrentRewardEpochId()` on
+`FlareSystemsManager`), or restart the proxy alone — its restart path loads both
+`lastID-1` and `lastID`, where a cold init takes only the newest.
+
 ---
 
 ## When the extension image changes

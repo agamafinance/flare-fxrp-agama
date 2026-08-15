@@ -5,10 +5,12 @@ import (
 	"crypto/ecdsa"
 	"encoding/hex"
 	"encoding/json"
+	"extension-scaffold/tools/pkg/support"
+	"fmt"
 	"math/big"
+	"net/http"
 	"os"
 	"strings"
-	"extension-scaffold/tools/pkg/support"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -136,6 +138,17 @@ func RegisterNode(s *support.Support, teeInfo *types.SignedTeeInfoResponse, host
 			// never materializes. Fail fast here with a clear message instead of
 			// after a wasted on-chain tx + ~30s of polling.
 			if err := CheckFTDCProxyPolicyConsistency(s, ftdcTeeURL); err != nil {
+				return err
+			}
+
+			// And wait for OUR OWN attestation result to exist before asking anyone to
+			// check it. The availability check makes a data provider's verifier fetch
+			// hostURL/action/result/<teeAttestInstructionID>; that result only appears
+			// once the instruction has been delivered, voted to threshold and answered
+			// by our TEE — a dozen seconds, not the ~1s this step used to allow. Fetching
+			// too early returns nothing, and the verifier's failure is swallowed without
+			// a log or an event, so registration then hangs on a 404 that never resolves.
+			if err := WaitForOwnAttestationResult(hostURL, teeAttestInstructionID); err != nil {
 				return err
 			}
 
@@ -316,6 +329,47 @@ func RequestFTDCAvailabilityCheck(s *support.Support, teeID, externalTeeID commo
 	logger.Infof("availability check sent, instructionId: %s", hex.EncodeToString(instructionID[:]))
 
 	return instructionID, nil
+}
+
+// WaitForOwnAttestationResult blocks until our own proxy serves the attestation
+// result, which is the precondition for the availability check to succeed.
+func WaitForOwnAttestationResult(hostURL string, instructionID [32]byte) error {
+	id := common.Hash(instructionID)
+	url := fmt.Sprintf("%s/action/result/%s?submissionTag=threshold", strings.TrimRight(hostURL, "/"), id.Hex())
+	// A 200 here is not success. The node answers a rejected instruction with a
+	// well-formed result carrying status 0, and the availability check downstream
+	// then hangs on a proof that will never be produced. Decode the body and insist
+	// on status 1, so the node's own explanation surfaces here instead of being
+	// rediscovered hours later in the enclave logs.
+	for i := range 60 {
+		resp, err := http.Get(url)
+		if err == nil {
+			var res struct {
+				Status uint8  `json:"status"`
+				Log    string `json:"log"`
+			}
+			decErr := json.NewDecoder(resp.Body).Decode(&res)
+			code := resp.StatusCode
+			resp.Body.Close()
+			if code == 200 && decErr == nil {
+				if res.Status == 1 {
+					logger.Infof("own attestation result available after %ds", i*2)
+					return nil
+				}
+				return errors.Errorf(
+					"our TEE rejected the attestation instruction (status %d): %s\n"+
+						"The result is served, so delivery works — the node refused the work itself. "+
+						"'policy of the given reward epoch not in the storage' means the node holds only the "+
+						"next signing policy, announced early, and not the one the instruction is stamped with; "+
+						"it clears when that epoch actually starts.",
+					res.Status, res.Log)
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return errors.Errorf(
+		"our own proxy never served the attestation result at %s — the availability check would ask a data "+
+			"provider to fetch it and get nothing, so registration would hang on a 404", url)
 }
 
 func GetFTDCAvailabilityCheckResult(hostURL string, instructionId common.Hash) (*machinemanager.ITeeAvailabilityCheckProof, error) {
