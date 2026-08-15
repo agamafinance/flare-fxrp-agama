@@ -57,8 +57,8 @@ TEE_ZONE="${TEE_ZONE:-$ZONE}"
 case "${1:-}" in
     --info)
         ip="$(support_public_ip)" || die "no support VM"
-        log "proxy: http://$ip:6664"
-        curl -s --max-time 20 "http://$ip:6664/info" | jq '.machineData | {extensionId, codeHash, platform, initialOwner}' 2>/dev/null \
+        log "proxy: http://$ip:6674"
+        curl -s --max-time 20 "http://$ip:6674/info" | jq '.machineData | {extensionId, codeHash, platform, initialOwner}' 2>/dev/null \
             || die "the proxy did not answer — check: gcloud compute ssh $SUPPORT_VM --zone=$ZONE --command 'docker logs agama-fce-ext-proxy-1'"
         exit 0 ;;
     --destroy)
@@ -161,14 +161,17 @@ DIGEST="$(gcloud artifacts docker images describe "$IMAGE:latest" --format='valu
 [[ -n "$DIGEST" ]] || die "no image in $IMAGE — run without --tee-only first"
 log "image digest (this is what gets attested): $DIGEST"
 
+# Container 6663/6664 are published on host 6673/6674 (docker-compose.yaml), so the
+# firewall and every URL below use the HOST ports. Getting this wrong is silent:
+# the TEE simply never reaches the proxy and never announces itself.
 gcloud compute firewall-rules create agama-fce-proxy \
-    --allow=tcp:6664 --source-ranges=0.0.0.0/0 --target-tags=agama-fce 2>/dev/null || true
+    --allow=tcp:6674 --source-ranges=0.0.0.0/0 --target-tags=agama-fce 2>/dev/null || true
 gcloud compute firewall-rules create agama-fce-proxy-internal \
-    --allow=tcp:6663 --source-ranges=10.128.0.0/9 --target-tags=agama-fce 2>/dev/null || true
+    --allow=tcp:6673 --source-ranges=10.128.0.0/9 --target-tags=agama-fce 2>/dev/null || true
 
 SUPPORT_INTERNAL="$(support_ip)"
 SUPPORT_PUBLIC="$(support_public_ip)"
-log "proxy internal http://$SUPPORT_INTERNAL:6663 · public http://$SUPPORT_PUBLIC:6664"
+log "proxy internal http://$SUPPORT_INTERNAL:6673 · public http://$SUPPORT_PUBLIC:6674"
 
 step "Confidential Space VM (AMD SEV)"
 # --confidential-compute-type=SEV: FCC attests GCP_AMD_SEV, not TDX.
@@ -193,7 +196,7 @@ for zone in $TEE_ZONES; do
             --confidential-compute-type=SEV --maintenance-policy=TERMINATE --shielded-secure-boot \
             --image-family=confidential-space --image-project=confidential-space-images \
             --scopes=cloud-platform --tags=agama-fce \
-            --metadata="^~^tee-image-reference=$IMAGE@$DIGEST~tee-container-log-redirect=true~tee-env-MODE=0~tee-env-CHAIN_URL=${CHAIN_URL:-https://coston2-api.flare.network/ext/C/rpc}~tee-env-EXTENSION_ID=$EXTENSION_ID~tee-env-INITIAL_OWNER=$INITIAL_OWNER~tee-env-PROXY_URL=http://$SUPPORT_INTERNAL:6663" 2>&1 | tail -3; then
+            --metadata="^~^tee-image-reference=$IMAGE@$DIGEST~tee-container-log-redirect=true~tee-env-MODE=0~tee-env-CHAIN_URL=${CHAIN_URL:-https://coston2-api.flare.network/ext/C/rpc}~tee-env-EXTENSION_ID=$EXTENSION_ID~tee-env-INITIAL_OWNER=$INITIAL_OWNER~tee-env-PROXY_URL=http://$SUPPORT_INTERNAL:6673" 2>&1 | tail -3; then
             TEE_ZONE="$zone"
             break 2
         fi
@@ -205,6 +208,22 @@ done
 printf 'TEE_ZONE=%s\n' "$TEE_ZONE" > "$PROJECT_DIR/config/tee-vm.env"
 log "TEE VM up in $TEE_ZONE"
 
+# The proxy panics if the TEE does not answer its first info request within five
+# minutes of startup, and a cold Confidential Space boot takes longer than that.
+# So the proxy is restarted once the TEE is actually up, not before.
+log "waiting for the enclave to boot, then restarting the proxy"
+for _ in $(seq 1 30); do
+    sleep 20
+    if gcloud compute instances get-serial-port-output "$TEE_VM" --zone="$TEE_ZONE" 2>/dev/null \
+        | grep -q "workload task started"; then
+        log "workload started"
+        break
+    fi
+done
+gcloud compute ssh "$SUPPORT_VM" --zone="$ZONE" --quiet --command \
+    'cd ~/agama-fce && sudo docker compose -p agama-fce -f docker-compose.yaml -f docker-compose.coston2.yaml restart ext-proxy'
+
+
 cat <<EOF
 
 $(step "Next")
@@ -213,7 +232,7 @@ $(step "Next")
      Expect platform GCP_AMD_SEV and a codeHash that is NOT 0x194844cf… (simulated).
 
   2. Point .env at the live proxy and register the machine on chain:
-       EXT_PROXY_URL=http://$SUPPORT_PUBLIC:6664
+       EXT_PROXY_URL=http://$SUPPORT_PUBLIC:6674
        ./scripts/post-build.sh
 
   3. Bind the RFQ to that TEE and run a full sealed-bid round trip:
