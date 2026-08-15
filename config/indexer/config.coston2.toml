@@ -19,7 +19,12 @@ history_epochs = 0
 # while the FSP event backfill still completed in seconds. Whatever the cause, this is
 # the value that demonstrably indexes.
 rpc_concurrency = 20
-batch_size = 1000
+# Small, because this is also the COMMIT size: rows only land when a batch fills.
+# At 1000 the indexer holds ~30 minutes of chain before writing anything, so it can
+# never come within the proxy's hardcoded 60-second sync tolerance
+# (outOfSyncTolerance in tee-proxy internal/proxy/proxy.go) and the proxy refuses to
+# serve forever. Frequent small commits are what keep the proxy alive.
+batch_size = 20
 # Must match the endpoint's eth_getLogs cap: a wider range is rejected outright and
 # the indexer retries it silently, so the backfill never advances. Flare's own public
 # RPC caps this at 30. That makes the initial FSP backfill slow, but block catch-up —

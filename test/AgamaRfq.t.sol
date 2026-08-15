@@ -37,6 +37,28 @@ contract MockERC20 is IERC20 {
     }
 }
 
+/// Stand-in for FTSOv2. `decimals` is signed, as in the real feed.
+contract MockFtso {
+    uint256 public value;
+    int8 public dec;
+    uint64 public ts;
+
+    constructor(uint256 _value, int8 _dec, uint64 _ts) {
+        value = _value;
+        dec = _dec;
+        ts = _ts;
+    }
+
+    function set(uint256 _value, uint64 _ts) external {
+        value = _value;
+        ts = _ts;
+    }
+
+    function getFeedById(bytes21) external payable returns (uint256, int8, uint64) {
+        return (value, dec, ts);
+    }
+}
+
 /// Stand-in for the FlareTeeManager diamond: records what was routed to the TEE.
 contract MockTeeManager is ITeeExtensionRegistry, ITeeMachineRegistry {
     address public instructionSender;
@@ -96,7 +118,21 @@ contract AgamaRfqTest is Test {
 
     string internal constant TAG = "submit";
 
+    MockFtso internal ftso;
+    address internal constant REGISTRY = 0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019;
+
+    /// XRP at $0.50, published now. 6 FXRP is then $3 — inside the band.
+    function _mockOracle() internal {
+        ftso = new MockFtso(50_000_000, 8, uint64(block.timestamp)); // 0.5 with 8 decimals
+        vm.mockCall(
+            REGISTRY,
+            abi.encodeWithSignature("getContractAddressByName(string)", "FtsoV2"),
+            abi.encode(address(ftso))
+        );
+    }
+
     function setUp() public {
+        _mockOracle();
         tee = vm.addr(teeKey);
         manager = new MockTeeManager();
         fxrp = new MockERC20();
@@ -263,6 +299,57 @@ contract AgamaRfqTest is Test {
         vm.warp(block.timestamp + rfq.SETTLE_WINDOW() + 1);
         vm.expectRevert("settle window closed");
         rfq.settle(data, actionId, TAG, 1, signature);
+    }
+
+    // --- the oracle bounds the enclave, not the other way round ----------------
+
+    function test_APremiumAboveTheUsdCapIsRejectedEvenWhenSigned() public {
+        // 60 FXRP at $0.50 is $30, over the $10 per-settlement cap. The enclave would
+        // never pick it — this proves the contract refuses it anyway.
+        uint256 id = _openRfq();
+        bytes32 actionId = keccak256("action");
+        bytes memory data = _resultData(id, winner, 60_000_000, block.timestamp + 600);
+
+        vm.expectRevert("premium above the USD cap");
+        rfq.settle(data, actionId, TAG, 1, _sign(teeKey, data, actionId, 1));
+    }
+
+    function test_APremiumBelowTheUsdFloorIsRejected() public {
+        // The seller's reserve is in tokens; the floor is in USD. A 2 FXRP reserve is
+        // $1 here, but drop the oracle to $0.05 and the same trade is worth $0.10.
+        uint256 id = _openRfq();
+        ftso.set(5_000_000, uint64(block.timestamp)); // $0.05
+        bytes32 actionId = keccak256("action");
+        bytes memory data = _resultData(id, winner, RESERVE, block.timestamp + 600);
+
+        vm.expectRevert("premium below the USD floor");
+        rfq.settle(data, actionId, TAG, 1, _sign(teeKey, data, actionId, 1));
+    }
+
+    function test_AStaleOracleFailsClosed() public {
+        uint256 id = _openRfq();
+        bytes32 actionId = keccak256("action");
+        bytes memory data = _resultData(id, winner, PRICE, block.timestamp + 3000);
+        bytes memory signature = _sign(teeKey, data, actionId, 1);
+
+        vm.warp(block.timestamp + 11 minutes); // feed older than MAX_FEED_AGE
+        vm.expectRevert("stale xrp/usd feed");
+        rfq.settle(data, actionId, TAG, 1, signature);
+    }
+
+    function test_TheUsdCapNeverBindsBelowTheSellersOwnReserve() public {
+        // A seller asking 100 FXRP ($50) must not be locked out by a $10 global cap.
+        yt.mint(seller, YT_AMOUNT);
+        vm.prank(seller);
+        yt.approve(address(rfq), YT_AMOUNT);
+        vm.prank(seller);
+        uint256 id = rfq.openRfq(YT_AMOUNT, 40_000_000); // reserve 40 FXRP = $20
+
+        bytes32 actionId = keccak256("bigticket");
+        bytes memory data = _resultData(id, winner, 45_000_000, block.timestamp + 600); // $22.50
+        rfq.settle(data, actionId, TAG, 1, _sign(teeKey, data, actionId, 1));
+
+        assertEq(fxrp.balanceOf(seller), 45_000_000, "the seller's own floor sets the cap");
     }
 
     // --- cancel and settle never race ----------------------------------------

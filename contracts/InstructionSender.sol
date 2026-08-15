@@ -5,6 +5,16 @@ pragma solidity ^0.8.27;
 import { ITeeExtensionRegistry } from "./interfaces/ITeeExtensionRegistry.sol";
 import { ITeeMachineRegistry } from "./interfaces/ITeeMachineRegistry.sol";
 
+/// @notice Flare's ContractRegistry — the same address on every Flare network.
+interface IContractRegistry {
+    function getContractAddressByName(string calldata _name) external view returns (address);
+}
+
+/// @notice The enshrined FTSOv2 oracle. `decimals` is a signed int8.
+interface IFtsoV2 {
+    function getFeedById(bytes21 _feedId) external payable returns (uint256 _value, int8 _decimals, uint64 _timestamp);
+}
+
 /// @notice Minimal ERC20 surface used for the YT escrow and the FXRP premium.
 interface IERC20 {
     function transfer(address to, uint256 amount) external returns (bool);
@@ -78,6 +88,28 @@ contract AgamaRfqInstructionSender {
 
     /// @notice Settlement window. `cancel` only opens after it, so settle and cancel never race.
     uint256 public constant SETTLE_WINDOW = 15 minutes;
+
+    // --- The oracle band, enforced here and not only inside the enclave ---
+    //
+    // The extension already values every quote in USD through FTSOv2 and refuses
+    // anything outside this band. Repeating the check here is the point: it is what
+    // stops a compromised or simply buggy enclave from naming any winner at any price
+    // the seller's reserve happens to allow. The enclave chooses within the band; the
+    // contract only accepts within the band. Both read the same enshrined feed.
+
+    /// @notice Flare's ContractRegistry, identical on every Flare network.
+    IContractRegistry public constant CONTRACT_REGISTRY =
+        IContractRegistry(0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019);
+
+    /// @notice FTSOv2 feed id for XRP/USD.
+    bytes21 public constant XRP_USD_FEED = bytes21(0x015852502f55534400000000000000000000000000);
+
+    /// @notice $0.50 floor: reject economic dust.
+    uint256 public constant MIN_PREMIUM_USD_1E6 = 500_000;
+    /// @notice $10 cap per settlement. Never binds below the seller's own reserve.
+    uint256 public constant MAX_PREMIUM_USD_1E6 = 10_000_000;
+    /// @notice Reject a feed older than this: a stale oracle must fail closed.
+    uint256 public constant MAX_FEED_AGE = 10 minutes;
 
     /// @notice A live request for quotes. Quotes themselves never appear on chain.
     struct Rfq {
@@ -274,6 +306,7 @@ contract AgamaRfqInstructionSender {
         require(block.timestamp <= q.settleBy, "settle window closed"); // bounds the MM's exposure
         require(block.timestamp <= deadline, "expired");
         require(winner != address(0), "no winner");
+        _requirePremiumInUsdBand(price, q.minPrice);
 
         q.open = false;
         // winner pays the FXRP premium to the seller; escrowed YT goes to the winner
@@ -298,6 +331,31 @@ contract AgamaRfqInstructionSender {
     function _getExtensionId() internal view returns (uint256) {
         require(_extensionId != 0, "Extension ID is not set.");
         return _extensionId;
+    }
+
+    /// @notice The live XRP/USD price from FTSOv2, scaled to 1e18.
+    /// @dev Reverts on a stale or absurd feed, so settlement fails closed rather than
+    ///      settling against a price nobody can stand behind.
+    function xrpUsd1e18() public returns (uint256) {
+        IFtsoV2 ftso = IFtsoV2(CONTRACT_REGISTRY.getContractAddressByName("FtsoV2"));
+        (uint256 value, int8 decimals, uint64 timestamp) = ftso.getFeedById(XRP_USD_FEED);
+        require(value > 0, "no xrp/usd feed");
+        require(block.timestamp - timestamp <= MAX_FEED_AGE, "stale xrp/usd feed");
+        return decimals < 0
+            ? value * 1e18 * (10 ** uint256(uint8(-decimals)))
+            : (value * 1e18) / (10 ** uint256(uint8(decimals)));
+    }
+
+    /// @dev The premium, valued in USD at the live oracle price, must sit inside the band.
+    ///      The cap never binds below twice the seller's own reserve, so a seller who
+    ///      deliberately asks for more than $10 is not locked out by a global constant.
+    function _requirePremiumInUsdBand(uint256 _price, uint256 _minPrice) private {
+        uint256 xrpUsd = xrpUsd1e18();
+        uint256 premiumUsd = (_price * xrpUsd) / 1e18; // FXRP is 6dp and ~1:1 with XRP
+        uint256 reserveUsd = (_minPrice * xrpUsd) / 1e18;
+        uint256 cap = MAX_PREMIUM_USD_1E6 > 2 * reserveUsd ? MAX_PREMIUM_USD_1E6 : 2 * reserveUsd;
+        require(premiumUsd >= MIN_PREMIUM_USD_1E6, "premium below the USD floor");
+        require(premiumUsd <= cap, "premium above the USD cap");
     }
 
     /// @dev EIP-191 personal-sign wrapper over a 32-byte hash.
