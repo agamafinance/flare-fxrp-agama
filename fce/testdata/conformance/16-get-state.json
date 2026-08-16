@@ -1,0 +1,22 @@
+{
+  "name": "16-get-state",
+  "description": "GET /state returns bytes32 stateVersion and counts only \u2014 never the book",
+  "request": {
+    "method": "GET",
+    "path": "/state"
+  },
+  "expect": {
+    "status": 200,
+    "json": {
+      "stateVersion": "0x302e312e30000000000000000000000000000000000000000000000000000000",
+      "state": {
+        "version": "0.1.0",
+        "rfqsTracked": 0,
+        "quotesHeld": 0,
+        "quotesAccepted": 0,
+        "quotesRejected": 1,
+        "settlementsSigned": 0
+      }
+    }
+  }
+}

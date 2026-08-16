@@ -1,0 +1,14 @@
+{
+  "fixtures": [
+    "01-quote-malformed-payload",
+    "08-unknown-op-type",
+    "09-unknown-op-command",
+    "10-invalid-action-json",
+    "11-invalid-hex-in-message",
+    "12-message-not-datafixed",
+    "13-get-action-not-allowed",
+    "14-post-state-not-allowed",
+    "15-unknown-path",
+    "16-get-state"
+  ]
+}

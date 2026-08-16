@@ -1,0 +1,14 @@
+# Runtime dependencies. Versions are pinned exactly: this file is the
+# reproducibility anchor for the image build (see REPRODUCIBILITY.md).
+#
+# Every pin below must ship prebuilt manylinux wheels so nothing compiles at
+# image build time — that is what lets python/Dockerfile install with
+# --no-install-recommends and skip the ~300MB build toolchain.
+#
+# eth-abi   — the SETTLE payload and the settlement result are ABI-encoded.
+# eth-keys  — recovering the market maker that signed a sealed quote.
+# eth-utils — keccak over the quote digest (pycryptodome backend, no C build).
+eth-abi==5.2.0
+eth-keys==0.7.0
+eth-utils==5.3.0
+eth-hash[pycryptodome]==0.7.1
