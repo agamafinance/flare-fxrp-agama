@@ -8,7 +8,7 @@ Field names and encodings are fixed by docs/extension-contract.md §4.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from .encoding import string_to_bytes32_hex
 
@@ -111,34 +111,87 @@ class StateResponse:
         return {"stateVersion": self.state_version, "state": self.state}
 
 
+# The two channels an action can arrive on. A direct action is posted by anyone
+# to the proxy's public /direct endpoint; an on-chain instruction is emitted by
+# the extension's own contract and delivered through the proxy's main queue.
+# These are NOT the same trust level, and a handler must say which it accepts:
+# a settlement reachable over /direct turns the sealed book into a public read
+# API (an unauthenticated caller gets the winner, the price, and a TEE signature).
+CHANNEL_DIRECT = "direct"
+CHANNEL_ONCHAIN = "onchain"
+
+
+class ChannelError(Exception):
+    """Raised when an action arrives on a channel its handler does not accept."""
+
+
 class Framework:
     """Maps (opType, opCommand) bytes32 pairs to handlers (contract §5)."""
 
     def __init__(self) -> None:
-        self._handlers: list[tuple[str, str, HandlerFunc]] = []
+        self._handlers: list[tuple[str, str, HandlerFunc, frozenset[str]]] = []
 
-    def handle(self, op_type: str, op_command: str, handler: HandlerFunc) -> None:
+    def handle(
+        self,
+        op_type: str,
+        op_command: str,
+        handler: HandlerFunc,
+        channels: Iterable[str] = (CHANNEL_DIRECT, CHANNEL_ONCHAIN),
+    ) -> None:
         """Register a handler.
 
         Both identifiers are given as plain strings and converted to bytes32.
         Pass "" for op_command to make this the default for every command under
-        op_type.
+        op_type. `channels` restricts which arrival channel is accepted; the
+        default accepts both, so a handler that must not be publicly callable
+        has to opt out explicitly.
         """
         self._handlers.append(
-            (string_to_bytes32_hex(op_type), string_to_bytes32_hex(op_command), handler)
+            (
+                string_to_bytes32_hex(op_type),
+                string_to_bytes32_hex(op_command),
+                handler,
+                frozenset(channels),
+            )
         )
 
     def lookup(self, op_type: str, op_command: str) -> Optional[HandlerFunc]:
         """Exact (opType, opCommand) match first, then the opCommand wildcard."""
+        entry = self._lookup_entry(op_type, op_command)
+        return entry[0] if entry else None
+
+    def lookup_for_channel(
+        self, op_type: str, op_command: str, channel: str
+    ) -> Optional[HandlerFunc]:
+        """Like `lookup`, but reject a handler that does not accept `channel`.
+
+        Returns the handler when the op pair is registered and the channel is
+        allowed; raises ChannelError when the op pair exists but the channel is
+        not; returns None when there is no handler at all.
+        """
+        entry = self._lookup_entry(op_type, op_command)
+        if entry is None:
+            return None
+        handler, channels = entry
+        if channel not in channels:
+            raise ChannelError(
+                f"op ({_normalize(op_type)}, {_normalize(op_command)}) "
+                f"is not accepted on the {channel} channel"
+            )
+        return handler
+
+    def _lookup_entry(
+        self, op_type: str, op_command: str
+    ) -> Optional[tuple[HandlerFunc, frozenset[str]]]:
         op_type = _normalize(op_type)
         op_command = _normalize(op_command)
 
-        for reg_type, reg_cmd, handler in self._handlers:
+        for reg_type, reg_cmd, handler, channels in self._handlers:
             if reg_type == op_type and reg_cmd == op_command:
-                return handler
-        for reg_type, reg_cmd, handler in self._handlers:
+                return handler, channels
+        for reg_type, reg_cmd, handler, channels in self._handlers:
             if reg_type == op_type and reg_cmd == EMPTY_BYTES32:
-                return handler
+                return handler, channels
         return None
 
 

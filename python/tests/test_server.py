@@ -104,7 +104,7 @@ class TestMalformedInput:
 
 class TestActionResultWireFormat:
     def test_success_shape(self, srv):
-        status, body = srv.handle_request("POST", "/action", build_action(original=a_quote()))
+        status, body = srv.handle_request("POST", "/action", build_direct_action(original=a_quote()))
 
         assert status == 200
         assert body["status"] == 1
@@ -116,14 +116,14 @@ class TestActionResultWireFormat:
     def test_version_is_plain_string_not_bytes32(self, srv):
         # Contract §4.4: tee-node declares `Version string`. The sign repo's
         # Python/TS ports hex-encode this and are wrong; this test pins it.
-        _, body = srv.handle_request("POST", "/action", build_action(original=a_quote()))
+        _, body = srv.handle_request("POST", "/action", build_direct_action(original=a_quote()))
 
         assert body["version"] == "0.1.0"
         assert not body["version"].startswith("0x")
 
     def test_handler_error_is_http_200_with_status_0(self, srv):
         # Handler failure is signalled in the body, never by the HTTP status.
-        status, body = srv.handle_request("POST", "/action", build_action(original=b"not a quote"))
+        status, body = srv.handle_request("POST", "/action", build_direct_action(original=b"not a quote"))
 
         assert status == 200
         assert body["status"] == 0
@@ -135,7 +135,7 @@ class TestActionResultWireFormat:
         # tee-node's ActionResult has no omitempty tags, so every field appears
         # on the wire regardless of value. Verified against Go by the
         # conformance fixtures in testdata/conformance/.
-        _, body = srv.handle_request("POST", "/action", build_action(original=a_quote()))
+        _, body = srv.handle_request("POST", "/action", build_direct_action(original=a_quote()))
 
         assert set(body) == {
             "id", "submissionTag", "status", "log", "opType",
@@ -146,14 +146,14 @@ class TestActionResultWireFormat:
     def test_echoes_id_and_submission_tag(self, srv):
         action_id = "0x" + "ab" * 32
         _, body = srv.handle_request(
-            "POST", "/action", build_action(original=a_quote(), action_id=action_id)
+            "POST", "/action", build_direct_action(original=a_quote(), action_id=action_id)
         )
         assert body["id"] == action_id
         assert body["submissionTag"] == "submit"
 
     def test_settle_abi_path(self, srv):
         # The on-chain instruction is ABI-encoded, not JSON — the other wire shape.
-        srv.handle_request("POST", "/action", build_action(original=a_quote()))
+        srv.handle_request("POST", "/action", build_direct_action(original=a_quote()))
         _, body = srv.handle_request(
             "POST",
             "/action",
@@ -173,7 +173,7 @@ class TestStateWireFormat:
         assert len(body["stateVersion"]) == 66
 
     def test_state_reflects_handler_effects(self, srv):
-        srv.handle_request("POST", "/action", build_action(original=a_quote()))
+        srv.handle_request("POST", "/action", build_direct_action(original=a_quote()))
         _, body = srv.handle_request("GET", "/state", b"")
         assert body["state"]["quotesAccepted"] == 1
         assert body["state"]["quotesHeld"] == 1
@@ -228,3 +228,50 @@ class TestDirectAction:
     def test_a_direct_action_with_no_payload_is_a_handler_error(self, srv):
         _status, body = srv.handle_request("POST", "/action", build_direct_action(original=b""))
         assert body["status"] == 0
+
+
+class TestChannelSeparation:
+    """SETTLE reveals the winner and price and is signed by the TEE, so it must
+    never be reachable over the public /direct endpoint — only as an on-chain
+    instruction. QUOTE is the opposite: it must stay reachable over /direct so a
+    quote never touches the chain."""
+
+    def _settle(self, contract=RFQ):
+        return hex_to_bytes(settle_msg(rfq_id=1, contract=contract))
+
+    def test_settle_over_direct_is_refused_before_the_handler_runs(self, srv):
+        # The exploit: an unauthenticated caller posts RFQ/SETTLE to /direct and
+        # reads back the winner and price. It must be refused with 403, and the
+        # body must carry no settlement data.
+        status, body = srv.handle_request(
+            "POST", "/action",
+            build_direct_action(op_command="SETTLE", original=self._settle()),
+        )
+        assert status == 403
+        assert "data" not in body or body.get("data") in (None, "0x")
+
+    def test_settle_as_an_onchain_instruction_is_accepted(self, srv):
+        # The same op pair, arriving through the main queue, must still route to
+        # the handler — so the fix does not break real settlement.
+        status, body = srv.handle_request(
+            "POST", "/action",
+            build_action(op_command="SETTLE", original=self._settle()),
+        )
+        assert status == 200  # handler ran; it may report status 0 (no quotes)
+
+    def test_quote_over_direct_is_accepted(self, srv):
+        status, body = srv.handle_request(
+            "POST", "/action", build_direct_action(original=a_quote())
+        )
+        assert status == 200
+        assert body["status"] == 1, body["log"]
+
+    def test_quote_as_an_onchain_instruction_is_still_accepted(self, srv):
+        # QUOTE is not channel-locked: an on-chain quote only makes the
+        # submitter's own bid public and is harmless, so it must not be refused
+        # (the recorded wire-contract fixtures exercise QUOTE as an instruction).
+        status, body = srv.handle_request(
+            "POST", "/action", build_action(op_command="QUOTE", original=a_quote())
+        )
+        assert status == 200
+        assert body["status"] == 1, body["log"]

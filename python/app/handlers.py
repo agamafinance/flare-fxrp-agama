@@ -26,7 +26,7 @@ from typing import Any, Optional
 
 from base.encoding import bytes_to_hex, hex_to_bytes
 from base.node import NodeClient
-from base.types import Framework
+from base.types import CHANNEL_ONCHAIN, Framework
 
 from . import chain, quotes
 from .abi import decode_settle_message, encode_settlement
@@ -58,9 +58,23 @@ def reset_state() -> None:
 
 
 def register(framework: Framework) -> None:
-    """Wire handlers to (opType, opCommand) pairs."""
+    """Wire handlers to (opType, opCommand) pairs.
+
+    The channel restriction on SETTLE is load-bearing, not decoration. SETTLE
+    runs best execution over the sealed book and returns the winner and price,
+    signed by the TEE; it must arrive ONLY as an on-chain instruction from
+    AgamaRfqInstructionSender.requestSettlement, never over the proxy's public
+    /direct endpoint — otherwise any anonymous caller reads the book and collects
+    a TEE-signed settlement (verified exploitable against the live deployment).
+
+    QUOTE stays reachable on both channels. A market maker submits it over
+    /direct so the quote never touches the chain; an on-chain QUOTE would merely
+    make the submitter's own quote public, harms nobody else, and is never
+    emitted in production — so there is no reason to reject it and break the
+    recorded wire-contract fixtures that exercise QUOTE as an instruction.
+    """
     framework.handle(OP_TYPE_RFQ, OP_COMMAND_QUOTE, handle_quote)
-    framework.handle(OP_TYPE_RFQ, OP_COMMAND_SETTLE, handle_settle)
+    framework.handle(OP_TYPE_RFQ, OP_COMMAND_SETTLE, handle_settle, channels=(CHANNEL_ONCHAIN,))
 
 
 def report_state() -> Any:

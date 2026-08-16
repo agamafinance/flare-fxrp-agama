@@ -16,8 +16,11 @@ from typing import Any, Optional
 
 from .encoding import bytes32_hex_to_string, hex_to_bytes, string_to_bytes32_hex
 from .types import (
+    CHANNEL_DIRECT,
+    CHANNEL_ONCHAIN,
     DIRECT_ACTION,
     ActionResult,
+    ChannelError,
     Framework,
     RegisterFunc,
     ReportStateFunc,
@@ -142,7 +145,18 @@ class Server:
         except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
             return 400, {"error": f"invalid {action.data.type or 'instruction'} JSON in message: {e}"}
 
-        handler = self.framework.lookup(df.op_type, df.op_command)
+        channel = (
+            CHANNEL_DIRECT if action.data.type == DIRECT_ACTION else CHANNEL_ONCHAIN
+        )
+        try:
+            handler = self.framework.lookup_for_channel(
+                df.op_type, df.op_command, channel
+            )
+        except ChannelError as e:
+            # The op exists but not on this channel — e.g. a SETTLE posted to the
+            # public /direct endpoint. Refuse it here, before the handler runs, so
+            # the sealed book is never computed for an unauthenticated caller.
+            return 403, {"error": str(e)}
         if handler is None:
             return 501, "unsupported op type"
 
