@@ -87,6 +87,25 @@ contract MockTeeManager is ITeeExtensionRegistry, ITeeMachineRegistry {
         }
     }
 
+    address[] private _active;
+
+    function setActiveMachine(address _tee) external {
+        _active.push(_tee);
+    }
+
+    function clearActiveMachines() external {
+        delete _active;
+    }
+
+    function getActiveTeeMachines(uint256)
+        external
+        view
+        returns (address[] memory teeIds, string[] memory urls)
+    {
+        teeIds = _active;
+        urls = new string[](_active.length);
+    }
+
     function sendInstructions(address[] calldata, TeeInstructionParams calldata _params)
         external
         payable
@@ -145,7 +164,9 @@ contract AgamaRfqTest is Test {
         );
         manager.register(address(rfq));
         rfq.setExtensionId();
-        rfq.setTeeAddress(tee);
+        // No teeAddress pin by default: the registry governs, which is the mode
+        // the live deployment runs in. The registry lists our TEE as active.
+        manager.setActiveMachine(tee);
 
         yt.mint(seller, YT_AMOUNT);
         vm.prank(seller);
@@ -227,6 +248,52 @@ contract AgamaRfqTest is Test {
         assertFalse(open, "rfq closed");
     }
 
+    function test_AnOwnerPinnedEoaThatIsNotActiveCannotSettle() public {
+        // The owner pins teeAddress to an EOA it controls and signs a settlement
+        // with it. Without the registry check this would have paid the owner's
+        // chosen winner at the reserve; the registry does not list that EOA as an
+        // active machine, so it is rejected. This is the hole the binding closes.
+        uint256 rogueKey = 0xABCDEF;
+        rfq.setTeeAddress(vm.addr(rogueKey));
+
+        uint256 id = _openRfq();
+        bytes32 actionId = keccak256("action");
+        bytes memory data = _resultData(id, winner, PRICE, block.timestamp + 600);
+
+        vm.expectRevert("signer is not an active TEE machine for this extension");
+        rfq.settle(data, actionId, TAG, 1, _sign(rogueKey, data, actionId, 1));
+    }
+
+    function test_TheOptionalPinBindsWhenSet() public {
+        // A second machine is genuinely active, but the owner has pinned teeAddress
+        // to the first. The pin then binds: the other active machine is refused.
+        rfq.setTeeAddress(tee);
+        uint256 otherKey = 0xC0FFEE;
+        manager.setActiveMachine(vm.addr(otherKey));
+
+        uint256 id = _openRfq();
+        bytes32 actionId = keccak256("action2");
+        bytes memory data = _resultData(id, winner, PRICE, block.timestamp + 600);
+
+        vm.expectRevert("not the pinned TEE machine");
+        rfq.settle(data, actionId, TAG, 1, _sign(otherKey, data, actionId, 1));
+    }
+
+    function test_AnyActiveMachineSettlesWhenUnpinned() public {
+        // Default (no pin): a second active machine that was never pinned settles.
+        // This is the liveness property — requestSettlement can route to whichever
+        // machine getRandomTeeIds returns and the result still verifies.
+        uint256 otherKey = 0xC0FFEE;
+        manager.setActiveMachine(vm.addr(otherKey));
+
+        uint256 id = _openRfq();
+        bytes32 actionId = keccak256("action3");
+        bytes memory data = _resultData(id, winner, PRICE, block.timestamp + 600);
+
+        rfq.settle(data, actionId, TAG, 1, _sign(otherKey, data, actionId, 1));
+        assertEq(yt.balanceOf(winner), YT_AMOUNT, "a non-pinned active machine settled");
+    }
+
     // --- what the contract refuses to take on trust ---------------------------
 
     function test_ForgedSignatureIsRejected() public {
@@ -234,7 +301,9 @@ contract AgamaRfqTest is Test {
         bytes32 actionId = keccak256("action");
         bytes memory data = _resultData(id, winner, PRICE, block.timestamp + 600);
 
-        vm.expectRevert("bad TEE signature");
+        // A forged signature recovers to an address the registry does not list as
+        // an active machine for this extension.
+        vm.expectRevert("signer is not an active TEE machine for this extension");
         rfq.settle(data, actionId, TAG, 1, _sign(0xBADBAD, data, actionId, 1));
     }
 
@@ -244,9 +313,11 @@ contract AgamaRfqTest is Test {
         bytes memory signed = _resultData(id, winner, PRICE, block.timestamp + 600);
         bytes memory signature = _sign(teeKey, signed, actionId, 1);
 
-        // the relayer tries to redirect the YT to itself
+        // the relayer tries to redirect the YT to itself: tampering changes the
+        // signed hash, so the signature now recovers to some other address that
+        // the registry does not list as an active machine.
         bytes memory tampered = _resultData(id, address(0xBEEF), PRICE, block.timestamp + 600);
-        vm.expectRevert("bad TEE signature");
+        vm.expectRevert("signer is not an active TEE machine for this extension");
         rfq.settle(tampered, actionId, TAG, 1, signature);
     }
 

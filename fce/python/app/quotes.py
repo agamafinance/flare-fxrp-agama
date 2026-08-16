@@ -20,6 +20,7 @@ from . import chain
 from .config import (
     MAX_PREMIUM_USD_1E6,
     MAX_QUOTES_PER_RFQ,
+    MAX_RFQS_TRACKED,
     MIN_PREMIUM_USD_1E6,
     MIN_QUOTE_DEADLINE_SLACK,
 )
@@ -115,11 +116,32 @@ def store(quote: Quote) -> int:
     """Add a quote to the book, returning how many market makers now quote this RFQ."""
     key = (quote.rfq, quote.rfq_id)
     with _book_lock:
+        if key not in _book and len(_book) >= MAX_RFQS_TRACKED:
+            _evict_stalest(quote)
         book = _book.setdefault(key, {})
         if quote.mm not in book and len(book) >= MAX_QUOTES_PER_RFQ:
             raise QuoteError("too many market makers on this RFQ")
         book[quote.mm] = quote
         return len(book)
+
+
+def _evict_stalest(incoming: Quote) -> None:
+    """Make room for a new RFQ book by dropping the one that expires soonest.
+
+    Caller holds the lock. An RFQ's freshness is the latest deadline among its
+    quotes; a cancelled or abandoned RFQ carries the earliest deadlines, so it is
+    evicted first. This bounds enclave memory even for RFQs that are opened and
+    never settled (settlement is the only other thing that drops a book). Refuse
+    the incoming quote if every tracked RFQ outlives it, rather than evict a
+    fresher book for a staler newcomer.
+    """
+    def freshness(book: dict[str, Quote]) -> int:
+        return max(q.deadline for q in book.values())
+
+    victim_key, victim_book = min(_book.items(), key=lambda kv: freshness(kv[1]))
+    if freshness(victim_book) >= incoming.deadline:
+        raise QuoteError("too many RFQs tracked")
+    _book.pop(victim_key, None)
 
 
 def quotes_for(rfq: str, rfq_id: int) -> list[Quote]:

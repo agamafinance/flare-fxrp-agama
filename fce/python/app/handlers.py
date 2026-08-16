@@ -30,7 +30,13 @@ from base.types import CHANNEL_ONCHAIN, Framework
 
 from . import chain, quotes
 from .abi import decode_settle_message, encode_settlement
-from .config import OP_COMMAND_QUOTE, OP_COMMAND_SETTLE, OP_TYPE_RFQ, VERSION
+from .config import (
+    MIN_QUOTE_DEADLINE_SLACK,
+    OP_COMMAND_QUOTE,
+    OP_COMMAND_SETTLE,
+    OP_TYPE_RFQ,
+    VERSION,
+)
 from .quotes import QuoteError
 
 logger = logging.getLogger(__name__)
@@ -187,9 +193,15 @@ def handle_settle(msg: str) -> tuple[Optional[str], int, Optional[str]]:
         return None, 0, "no quotes held for this rfq"
     try:
         now = chain.latest_block_timestamp()
-        live = [q for q in candidates if q.deadline > now]
+        # Require the same slack settle-time as at ingest: a quote judged live here
+        # is about to be signed and relayed, and the contract enforces
+        # `block.timestamp <= deadline`. Accepting a quote that merely outlives
+        # `now` lets the enclave sign a settlement that expires before the relayer
+        # can land it, which then reverts on chain — a signed result that can never
+        # be used. Binding to now + slack keeps a signed settlement relayable.
+        live = [q for q in candidates if q.deadline > now + MIN_QUOTE_DEADLINE_SLACK]
         if not live:
-            return None, 0, "every held quote has expired"
+            return None, 0, "every held quote expires too soon to settle"
         winner, premium_usd = quotes.choose_winner(live, yt_amount, min_price, fxrp, contract_addr)
     except QuoteError as e:
         return None, 0, str(e)

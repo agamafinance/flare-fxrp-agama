@@ -134,7 +134,26 @@ class TestSettle:
         handlers.handle_quote(quote_msg(signed_quote(MM1, 6_000_000)))
         monkeypatch.setattr(chain, "latest_block_timestamp", lambda: DEADLINE + 1)
         _data, status, err = handlers.handle_settle(settle_msg())
-        assert (status, err) == (0, "every held quote has expired")
+        assert (status, err) == (0, "every held quote expires too soon to settle")
+
+    def test_a_quote_expiring_within_the_settle_slack_is_not_signed(self, monkeypatch):
+        # Accepted at ingest (deadline is well beyond now + slack), but by the time
+        # settlement runs the clock has advanced so the quote no longer outlives
+        # now + slack. Signing it would produce a settlement that reverts on chain
+        # with "expired" before the relayer can land it, so it must be dropped.
+        handlers.handle_quote(quote_msg(signed_quote(MM1, 6_000_000, deadline=NOW + 200)))
+        monkeypatch.setattr(chain, "latest_block_timestamp", lambda: NOW + 180)
+        _data, status, err = handlers.handle_settle(settle_msg())
+        assert (status, err) == (0, "every held quote expires too soon to settle")
+
+    def test_a_quote_with_a_full_slack_margin_still_settles(self, monkeypatch):
+        # The mirror of the above: a quote that clears now + slack at settle time
+        # must go through, so the tightened check does not reject healthy quotes.
+        handlers.handle_quote(quote_msg(signed_quote(MM1, 6_000_000, deadline=NOW + 500)))
+        monkeypatch.setattr(chain, "latest_block_timestamp", lambda: NOW + 100)
+        data, status, err = handlers.handle_settle(settle_msg())
+        assert (status, err) == (1, None)
+        assert decode_settlement(data)[3].lower() == addr(MM1)
 
     def test_a_closed_rfq_does_not_settle(self, monkeypatch):
         handlers.handle_quote(quote_msg(signed_quote(MM1, 6_000_000)))
@@ -154,3 +173,44 @@ class TestState:
         assert state["quotesRejected"] == 1
         assert state["quotesHeld"] == 1
         assert "6000000" not in json.dumps(state)
+
+
+class TestBookBounds:
+    """Enclave memory is bounded on two axes: quotes per RFQ, and RFQs tracked.
+    Both matter because /direct is unauthenticated and a quote costs nothing."""
+
+    def _q(self, rfq_id, deadline, mm="0xmm"):
+        return quotes.Quote(rfq=RFQ, rfq_id=rfq_id, mm=mm, price=6_000_000, deadline=deadline)
+
+    def test_a_thirty_third_market_maker_is_refused(self):
+        for i in range(quotes.MAX_QUOTES_PER_RFQ):
+            quotes.store(self._q(1, NOW + 3600, mm=f"0x{i:040x}"))
+        try:
+            quotes.store(self._q(1, NOW + 3600, mm="0xdeadbeef"))
+            assert False, "expected the 33rd market maker to be refused"
+        except quotes.QuoteError as e:
+            assert "too many market makers" in str(e)
+
+    def test_a_new_rfq_evicts_the_stalest_when_the_book_is_full(self, monkeypatch):
+        monkeypatch.setattr(quotes, "MAX_RFQS_TRACKED", 3)
+        # three RFQs whose quotes expire at increasing times
+        quotes.store(self._q(rfq_id=1, deadline=NOW + 100))
+        quotes.store(self._q(rfq_id=2, deadline=NOW + 200))
+        quotes.store(self._q(rfq_id=3, deadline=NOW + 300))
+        # a fourth, fresher than the stalest (rfq 1) → rfq 1 is evicted
+        quotes.store(self._q(rfq_id=4, deadline=NOW + 400))
+        held = {rid for (_rfq, rid) in quotes._book}
+        assert held == {2, 3, 4}, held
+
+    def test_a_stale_newcomer_is_refused_rather_than_evicting_a_fresher_book(self, monkeypatch):
+        monkeypatch.setattr(quotes, "MAX_RFQS_TRACKED", 2)
+        quotes.store(self._q(rfq_id=1, deadline=NOW + 500))
+        quotes.store(self._q(rfq_id=2, deadline=NOW + 600))
+        try:
+            # expires sooner than every tracked RFQ → must not evict a fresher one
+            quotes.store(self._q(rfq_id=3, deadline=NOW + 100))
+            assert False, "expected the stale newcomer to be refused"
+        except quotes.QuoteError as e:
+            assert "too many RFQs tracked" in str(e)
+        held = {rid for (_rfq, rid) in quotes._book}
+        assert held == {1, 2}, held

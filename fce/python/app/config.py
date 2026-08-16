@@ -36,6 +36,7 @@ XRP_USD_FEED = "015852502f55534400000000000000000000000000"
 # --- Market guards -----------------------------------------------------------
 
 MAX_QUOTES_PER_RFQ = 32          # bound the work a settlement can be made to do
+MAX_RFQS_TRACKED = 1024          # bound the number of RFQ books held in enclave memory
 MIN_QUOTE_DEADLINE_SLACK = 60    # a quote must outlive settlement by this many seconds
 
 MIN_XRP_USD_1E18 = 5 * 10**16    # $0.05: XRP/USD sanity floor

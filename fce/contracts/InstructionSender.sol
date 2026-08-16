@@ -42,8 +42,11 @@ interface IERC20 {
 ///        quote for an MM or replay it into another RFQ.
 ///     2. The seller sets a reserve `minPrice` at open time; `settle` enforces `price >= minPrice`
 ///        on-chain, so even a misbehaving extension cannot sell the YT below the seller's floor.
-///     3. The result must be signed by the registered TEE machine, whose code hash is whitelisted
-///        on-chain for this extension and whose attestation is verified by Flare's data providers.
+///     3. The result must be signed by a machine the FlareTeeManager lists as active (PRODUCTION)
+///        for this extension — `settle` checks the recovered signer against
+///        `getActiveTeeMachines(extensionId)`, so only a genuinely registered, code-hash-whitelisted,
+///        attested machine can settle. An arbitrary key the owner might set is not enough. An
+///        optional `teeAddress` pin can narrow this to one specific machine.
 ///   The extension reads seller / ytAmount / minPrice from this contract, not from the caller, so
 ///   the relayer of a settlement cannot alter the RFQ terms.
 ///
@@ -275,7 +278,6 @@ contract AgamaRfqInstructionSender {
         uint8 _status,
         bytes calldata _signature
     ) external {
-        require(teeAddress != address(0), "TEE address not set");
         require(_status == 1, "TEE reported failure");
 
         // Reconstruct ActionResult.Hash() = keccak256(keccak256(data) || id || keccak256(tag) || status).
@@ -285,7 +287,24 @@ contract AgamaRfqInstructionSender {
 
         // The node signs a domain-separated payload over resultHash, not resultHash directly.
         bytes32 payloadHash = keccak256(abi.encode(TEE_ACTION_RESULT_PREFIX, block.chainid, resultHash));
-        require(_recover(_ethSigned(payloadHash), _signature) == teeAddress, "bad TEE signature");
+        address signer = _recover(_ethSigned(payloadHash), _signature);
+
+        // The registry is the source of truth: the signer must be a machine at
+        // PRODUCTION status for this extension. This is what makes the settlement
+        // trustworthy — an arbitrary EOA the owner might set is not a registered,
+        // attested, code-hash-whitelisted machine and cannot pass here. Because
+        // ANY active machine is accepted, a settlement routed by requestSettlement
+        // to whichever machine getRandomTeeIds returned still settles, even after
+        // a redeploy mints a new machine address.
+        require(_isActiveTeeMachine(signer), "signer is not an active TEE machine for this extension");
+
+        // teeAddress is an OPTIONAL extra pin. Left at zero (the default) the
+        // registry check alone governs, which is what keeps settlement live across
+        // machine rotation. An operator that wants to pin one specific machine can
+        // set it, accepting that a rotation then needs a re-point.
+        if (teeAddress != address(0)) {
+            require(signer == teeAddress, "not the pinned TEE machine");
+        }
 
         (
             address contractAddr,
@@ -331,6 +350,19 @@ contract AgamaRfqInstructionSender {
     function _getExtensionId() internal view returns (uint256) {
         require(_extensionId != 0, "Extension ID is not set.");
         return _extensionId;
+    }
+
+    /// @dev True when `_signer` is one of the extension's PRODUCTION-status machines.
+    ///      The active set is small — stale records are paused — so the linear scan
+    ///      is cheap. Reverts through _getExtensionId if the extension is unset.
+    function _isActiveTeeMachine(address _signer) internal view returns (bool) {
+        (address[] memory teeIds, ) = TEE_MACHINE_REGISTRY.getActiveTeeMachines(_getExtensionId());
+        for (uint256 i = 0; i < teeIds.length; i++) {
+            if (teeIds[i] == _signer) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// @notice The live XRP/USD price from FTSOv2, scaled to 1e18.
