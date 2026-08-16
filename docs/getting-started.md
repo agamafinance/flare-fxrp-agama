@@ -1,30 +1,25 @@
 # Getting started — local
 
-Runs the Hello World scaffold end to end on a local devnet: deploy the
-`InstructionSender`, register the extension, start the TEE node + proxy, and send
-`SAY_HELLO` / `SAY_GOODBYE` through it.
+Runs the extension end to end on a local devnet: deploy
+`AgamaRfqInstructionSender`, register the extension, start the TEE node + proxy,
+and run one sealed-bid round trip through it.
 
 ## Prerequisites
 
 | Need | Why |
 |---|---|
 | Docker + Compose | runs the extension TEE, proxy and redis |
-| Go 1.25+ | `tools/` CLIs, and the `go` language implementation |
+| Go 1.25+ | the `tools/` CLIs: deploy, register, and the round-trip test |
 | Foundry (`forge`, `cast`) | compiles `contracts/`, reads chain state |
-| Node 20+ / Python 3.11+ | only for `LANGUAGE=typescript` / `python` |
+| Python 3.11+ | the extension itself, and its unit tests |
 | A funded key | deploys contracts and registers the extension |
-| FCC infrastructure running | Hardhat node + indexer + redis + the "normal" TEE proxy. Not in this repo — see `../../e2e/` |
+| FCC infrastructure running | Hardhat node + indexer + redis + the "normal" TEE proxy. Not in this repo |
 
-## Pick a language
+## The implementation
 
-The scaffold ships the same extension in Go, Python and TypeScript. Discovery is
-by directory: each implementation has a `<lang>/language.env` manifest.
-
-```bash
-LANGUAGE=go ./scripts/full-setup.sh --test      # or python, typescript
-```
-
-`LANGUAGE` can also live in `.env`. See [languages.md](languages.md).
+This repo ships one implementation, in Python. Discovery is by directory: each
+implementation carries a `<lang>/language.env` manifest, and `LANGUAGE` in `.env`
+selects it — here, `python`. See [languages.md](languages.md).
 
 ## One command
 
@@ -47,11 +42,11 @@ For Coston2, add a tunnel so the proxy is publicly reachable:
 ```bash
 docker compose ps                      # redis, ext-proxy, extension-tee
 curl -s http://localhost:6674/info     # extension id, code hash, platform
-./scripts/test.sh                      # SAY_HELLO + SAY_GOODBYE round-trip
+./scripts/test.sh                      # one sealed-bid round trip
 ```
 
-A passing run prints `Hello, World! Welcome to Flare Confidential Compute.` and
-`Goodbye, World!`.
+A passing run opens an RFQ, gets two sealed quotes accepted by the enclave,
+settles at the higher of the two and ends on `All tests passed.`
 
 ## Configuration
 
@@ -60,7 +55,7 @@ Everything lives in `.env` (start from `.env.example`); per-chain copies go in
 
 | Var | Default | Note |
 |---|---|---|
-| `LANGUAGE` | `go` | which implementation directory gets built |
+| `LANGUAGE` | `python` | which implementation directory gets built |
 | `DEPLOYMENT_PRIVATE_KEY` | Hardhat dev key | funded deployer |
 | `CHAIN_URL` / `CHAIN_ID` | `http://127.0.0.1:8545` | `CHAIN_ID` is **required** — unset leaves `chainID=0` and every TEE signature comes back empty |
 | `SIMULATED_TEE` | `true` | `true` on a laptop, **`false`** on real Confidential hardware |
@@ -120,8 +115,8 @@ development. `post-build.sh` registers the set on-chain idempotently before
 |---|---|
 | `config/proxy/extension_proxy.<chain>.docker.toml not found` | it is gitignored; copy the `.example` and fill in the `[db]` credentials |
 | docker `rootfs` mount error, or the path is now a directory | an older run mounted the missing config; `rm -rf` the directory, then copy the `.example` |
-| `tee-node v… is below the v0.0.22 minimum` | bump the pin in `go/go.mod` **and** `tools/go.mod` |
-| `tee-node mismatch` from `check-versions.sh` | the two `go.mod` pins drifted; align them or the Go and non-Go images run different builds |
+| `tee-node v… is below the v0.0.22 minimum` | bump the pin in `tools/go.mod`, the only `go.mod` this repo ships |
+| `tee-node mismatch` from `check-versions.sh` | a second `go.mod` was added and the pins drifted; align them or the images and the tooling run different builds |
 | `--chain` seems ignored | `.env` is sourced after flag parsing, so `CHAIN` in `.env` wins |
 | `signature must be 65 bytes, got 0` | `CHAIN_ID` unset → `chainID=0` |
 | `Verification.ChallengeExpired` | `register-tee` ran without `-command rRap` |

@@ -1,91 +1,98 @@
 # Architecture
 
-A minimal Flare Confidential Compute extension: two instructions (`SAY_HELLO`,
-`SAY_GOODBYE`) that echo a greeting and a per-caller counter. It exists to be
-copied, so the interesting part is the shape, not the logic.
+Agama's sealed-bid RFQ for yield tokens, running as a Flare Compute Extension.
+Market makers' quotes never reach the chain: each one is signed and sent straight
+to the enclave, matching runs inside attested hardware, and only the signed
+winning settlement comes back out for the contract to verify.
 
 ## Components
 
 | Piece | Where | Role |
 |---|---|---|
-| `InstructionSender` | `contracts/InstructionSender.sol` | on-chain entry point; emits instructions the TEE picks up |
-| Extension | `<language>/` | your handler — decodes the instruction, returns a response |
-| tee-node | pinned dep (`go/go.mod`) | runs inside the TEE, signs responses, talks to the proxy |
-| tee-proxy | `proxy/Dockerfile` | bridges TEE ↔ chain/FTDC; serves `/info` and `/action/result` |
+| `AgamaRfqInstructionSender` | `contracts/InstructionSender.sol` | escrows the YT, holds the RFQ lifecycle, verifies the TEE signature before it moves a token |
+| Extension | `python/` | `app/handlers.py` (the two handlers), `app/quotes.py` (quote authentication, the in-enclave book, best execution), `app/chain.py` (the reads made inside the enclave) |
+| tee-node | pinned in `tools/go.mod` | runs inside the TEE, signs responses, talks to the proxy |
+| tee-proxy | `proxy/Dockerfile` | bridges TEE ↔ chain/FTDC; serves `/info`, `/direct` and `/action/result` |
 | redis | compose service | the proxy's queue |
-| Deployment tooling | `tools/cmd/*` | deploy, register, allow versions, query state |
+| C-chain indexer | `scripts/start-indexer.sh` | the FSP data the proxy verifies against, self-hosted so no Flare credentials are needed |
+| Deployment tooling | `tools/cmd/*` | deploy, register, allow versions, query state, run the round trip |
 
 On-chain the extension is identified by an **extension id**, assigned by
 `TeeExtensionRegistry` and latched into the contract by `setExtensionId()`.
 
 ## Request flow
 
+Two channels in, one out.
+
 ```
-caller → InstructionSender.sendInstruction()   (on-chain tx)
-       → tee-proxy picks up the instruction
-       → tee-node (inside the TEE) → your handler
-       → signed response → proxy → /action/result
+market maker ──POST /direct (RFQ/QUOTE)──▶ proxy ──▶ TEE ─┐  book in enclave memory
+                                                          │
+seller ──openRfq──▶ AgamaRfqInstructionSender (escrows YT) │
+       ──requestSettlement──▶ registry ──▶ data providers ─┤
+                                                          │
+                              best execution ─────────────┘
+                                          │
+                            signed winning settlement
+                                          │
+anyone ──settle(result, sig)──▶ contract verifies the TEE signature, then pays
 ```
 
 The node signs every response against `CHAIN_ID`; a mismatch with the proxy's
-`chain_id` or the on-chain registry fails verification.
-
-## Language-neutral spine
-
-The repo root is language-agnostic. Each implementation is a sibling directory
-marked by a `language.env` manifest, and scripts glob `*/language.env` to discover
-them — there is no hardcoded list.
-
-| Directory | Layout |
-|---|---|
-| `go/` | `cmd/docker` (image entry), `cmd/start-tee` (local), `internal/extension` (handler), `internal/config` (op codes), `pkg/types` |
-| `python/` | `app/handlers.py` (handler), `app/config.py`, `base/` (server + encoding) |
-| `typescript/` | mirrors `python/` |
-
-`language.env` declares the Dockerfile plus the setup / build / test / run commands,
-so the scripts never need to know a language exists. See
-[languages.md](languages.md) and [extension-contract.md](extension-contract.md).
-
-Go links tee-node as a library; the other languages run it as a separate prebuilt
-binary and speak HTTP to it, which is why `build-node-base.sh` exists.
+`chain_id` or the on-chain registry fails verification. The contract accepts a
+settlement only from the machine set with `setTeeAddress`, and re-checks the
+seller's reserve and the USD premium band before it moves anything.
 
 ## Op codes
 
-Instructions carry an op command hashed to `bytes32`. The Solidity side and the
-handler must agree on the string.
+Instructions carry an op type and an op command, hashed to `bytes32`. The
+Solidity side and the handler must agree on the string.
 
-| Op | Handler | Response |
-|---|---|---|
-| `SAY_HELLO` | `processSayHello` | `Greeting`, `GreetingNumber` |
-| `SAY_GOODBYE` | `processSayGoodbye` | `Farewell`, `FarewellNumber` |
+| Op | Channel | Handler | Response |
+|---|---|---|---|
+| `RFQ` / `QUOTE` | direct action, never on chain | `handle_quote` | accepted or rejected — nothing about the quote itself |
+| `RFQ` / `SETTLE` | on-chain instruction from `requestSettlement` | `handle_settle` | the winning settlement, ABI-encoded and signed by the node |
 
-Defined in `go/internal/config/config.go` (and the equivalent per language). An
-unmatched op is rejected with the expected hash logged — the usual cause of a
-mismatch is editing one side only.
+Defined in `contracts/InstructionSender.sol` and `python/app/config.py`. An
+unmatched pair is not a compile error: it falls through to "unsupported op type"
+(HTTP 501) at runtime.
 
 ## State
 
-In-memory counters, keyed by caller. Nothing is persisted: **the TEE has no durable
-storage**, so a relaunch resets counts and mints a new `teeId`. Real extensions
-that need state must encrypt and export it.
+The quote book lives in `app/quotes.py`, in enclave memory, and never leaves it.
+`GET /state` reports counts only — never a price, never a market maker — and a
+settled RFQ's quotes are dropped. Nothing is persisted, so a relaunch loses the
+book **and mints a new `teeId`**; see [deployment-steps.md](deployment-steps.md).
+
+## Language layout
+
+This extension ships Python only, but the repo root stays language-agnostic. The
+implementation is discovered through `python/language.env`, which declares the
+Dockerfile plus the setup / build / test / run commands, and the scripts glob
+`*/language.env` rather than holding a list. The Python image runs the tee-node
+binary beside the handler — `docker/node-base.Dockerfile` builds it — where a Go
+implementation would link tee-node as a library. See [languages.md](languages.md)
+and [extension-contract.md](extension-contract.md).
 
 ## Entry points
 
 | Script | Does |
 |---|---|
-| `pre-build.sh` | generate bindings, compile, deploy `InstructionSender`, register extension |
+| `pre-build.sh` | generate bindings, compile, deploy `AgamaRfqInstructionSender`, register the extension |
+| `start-indexer.sh` | our own C-chain indexer and its database |
 | `start-services.sh` | build + start node/proxy/redis, sync the tunnel on testnets |
-| `post-build.sh` | allow TEE version, set governance, register the TEE machine |
-| `test.sh` | end-to-end round-trip through a running deployment |
-| `full-setup.sh` | all of the above in order |
+| `post-build.sh` | allow the TEE version, set governance, register and promote the TEE machine |
+| `test.sh` | one full sealed-bid round trip against a running deployment |
+| `verify-registration.sh` | print the live node's view beside the `FlareTeeManager` record |
+| `deploy-gcp.sh` | Confidential Space VM for the extension, an ordinary VM for the rest |
+| `full-setup.sh` | pre-build, start-services and post-build in order |
 | `check-versions.sh` | fails the build when dependency pins drift or fall below the floor |
 
 ## Version pinning
 
-`go/go.mod` is the single source of truth for the tee-node version;
-`scripts/lib/versions.sh` derives `TEE_NODE_REF` from it so non-Go images clone the
-same ref. `tools/go.mod` must match, and `check-versions.sh` enforces both that and
-the minimum version.
+`tools/go.mod` carries the tee-node and tee-proxy pins;
+`scripts/lib/versions.sh` derives `TEE_NODE_REF` from it so the image builds the
+same ref that the tooling links, and `check-versions.sh` enforces that plus the
+minimum version.
 
 ## Where to look next
 

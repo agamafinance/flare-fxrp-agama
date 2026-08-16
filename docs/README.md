@@ -24,6 +24,10 @@ obvious and every extension hits them:
   `tee.launch_policy.allow_env_override`
 - deploy by **digest**, not tag — the code hash is registered on-chain
 - `SIMULATED_TEE=false` on real hardware
+- `/action/result` wraps the result in `{"result": …}` — read `status` at the top
+  level and every success reads as a rejection
+- the indexer has to **stay** inside the proxy's 60-second sync tolerance, not
+  merely catch up once
 
 ## Scaffold — keep byte-identical across extensions
 
@@ -37,7 +41,9 @@ Provided by the scaffold; do not fork these:
 
 ## Extension-specific
 
-This repo is the scaffold itself, so its specifics are about being copied:
+This repo is built from the scaffold and ships one implementation, in Python.
+Two scaffold docs are kept because they are what any implementation is measured
+against:
 
 [languages.md](languages.md) — the multi-language layout, and adding your own ·
 [extension-contract.md](extension-contract.md) — the contract an implementation must satisfy

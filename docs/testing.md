@@ -26,7 +26,7 @@ They dispatch through `LANGUAGE_TEST_CMD` in each `<lang>/language.env`, so they
 
 This is the layer that keeps multiple implementations honest, and the acceptance test for a new language.
 
-`scripts/test-conformance.sh` starts **only the extension process** — no tee-node, no proxy, no chain, no Docker — replays the 16 fixtures in `testdata/conformance/`, and diffs every response field. The response payload is compared **byte-for-byte**, because tee-node hashes it and signs the result.
+`scripts/test-conformance.sh` starts **only the extension process** — no tee-node, no proxy, no chain, no Docker — replays the 10 fixtures in `testdata/conformance/`, and diffs every response field. The response payload is compared **byte-for-byte**, because tee-node hashes it and signs the result.
 
 ```bash
 ./scripts/test-conformance.sh --all
@@ -110,7 +110,7 @@ cd tools && CHAIN_URL=https://coston2-api.flare.network/ext/C/rpc \
 
 ## End-to-End Tests
 
-After post-build completes, you can send instructions to your extension and verify the results:
+After post-build completes, run the round trip against the deployed extension:
 
 ```bash
 ./scripts/test.sh
@@ -124,63 +124,26 @@ Or run everything in one shot:
 
 ## What the test does
 
-The test runner (`tools/cmd/run-test/main.go`) executes this lifecycle:
+The test runner (`tools/cmd/run-test/main.go`) drives one full confidential RFQ against a deployed extension:
 
-```
-1. SetExtensionId()         ← Generic: tells the contract its extension ID (idempotent)
-2. Send instruction          ← YOUR CODE: call your contract function with your payload
-3. Wait for TEE processing   ← Generic: time.Sleep(5s)
-4. Poll for result            ← Generic: utils.ActionResult() polls proxy (15 retries, 2s apart)
-5. Validate response          ← YOUR CODE: unmarshal Data into your type, check your fields
-```
+1. **Bind the contract.** `setExtensionId()` (idempotent), then `setTeeAddress` from the live proxy's `/info` — the TEE key is in enclave memory, so the machine address changes on every VM restart.
+2. **Open an RFQ.** The seller approves and escrows 100 YT against a 2 FXRP reserve. Each run hands that escrow to the winner, and YT has no open mint, so the test mints FXRP and splits it when the seller runs short.
+3. **Fund a market maker.** Derived deterministically from the tooling key, because the enclave refuses a quote signed by the RFQ's own seller. It gets gas, FXRP for the premium, and the approval `settle` will need.
+4. **Post two sealed quotes** — 4 and 6 FXRP — to the proxy's `/direct`, each signed over the same `quoteDigest` preimage the contract exposes. Neither touches the chain.
+5. **Request settlement** on chain, poll the result, and check that the enclave picked the 6 FXRP quote.
+6. **Relay it.** `settle(result, signature)` verifies the TEE signature, the reserve and the USD premium band before it moves anything.
 
-Steps 1, 3, and 4 are the same for every extension. Steps 2 and 5 are what you customize.
+No stored result at step 4 means one of two things: the enclave rejected the quote — its reason stays inside the enclave, in the extension log — or this TEE is not registered yet, so run `post-build.sh`.
 
-## How the scaffold test works
+## Two things that make a passing run look like a failure
 
-The scaffold's test sends instructions via `SendSayHello` and `SendSayGoodbye` and verifies the responses. Here's how each part works — when you build your own extension, you'll replace these with your own types, payloads, and assertions.
+### Direct actions are tagged `submit`
 
-### 1. Define your message and response types
+`/action/result/<id>` defaults to the `threshold` tag, so a quote that completed fine 404s unless the tag is explicit: `/action/result/<id>?submissionTag=submit`.
 
-The scaffold defines `sayHelloResponse` and `sayGoodbyeResponse` at the top of the test file. They **mirror** your extension's response shapes rather than importing them — `tools/` is deliberately independent of every language implementation, which is what lets this one test run unchanged against Go, Python and TypeScript:
+### The result is wrapped
 
-```go
-type sayHelloResponse struct {
-    Greeting       string `json:"greeting"`
-    GreetingNumber int    `json:"greetingNumber"`
-}
-
-type sayGoodbyeResponse struct {
-    Farewell       string `json:"farewell"`
-    FarewellNumber int    `json:"farewellNumber"`
-}
-```
-
-Replace these with structs matching your extension's response shapes.
-
-### 2. Send your instructions
-
-The scaffold builds JSON payloads and sends them through the contract. The scaffold includes two test cases:
-
-```go
-// SAY_HELLO test case
-payload, _ := json.Marshal(map[string]interface{}{
-    "name": "World",
-})
-instructionId, _, err := instrutils.SendSayHello(s, addr, payload)
-
-// SAY_GOODBYE test case
-payload, _ = json.Marshal(map[string]interface{}{
-    "name": "World",
-})
-instructionId, _, err = instrutils.SendSayGoodbye(s, addr, payload)
-```
-
-Replace the payloads with whatever your contract functions expect. If your Solidity contract has multiple send functions, you'll need to add corresponding Go helpers in `tools/pkg/utils/instructions.go` and call them here.
-
-### 3. Validate your responses
-
-The `verifyHelloResult` and `verifyGoodbyeResult` functions each receive the raw response from the proxy. The response envelope is always the same:
+The proxy returns the `ActionResult` under `result`, beside the node and proxy signatures:
 
 ```json
 {
@@ -190,104 +153,45 @@ The `verifyHelloResult` and `verifyGoodbyeResult` functions each receive the raw
     "log": "",
     "opType": "0x...",
     "opCommand": "0x...",
-    "data": "<your extension's JSON response>"
-  }
+    "data": "<the extension's response bytes>"
+  },
+  "signature": "0x...",
+  "proxySignature": "0x..."
 }
 ```
 
 - `status`: `0` = failed, `1` = success, `2` = pending
 - `log`: error message when `status == 0`
-- `data`: your extension's response bytes — this is whatever your `processAction` handler returned via `buildResult`
+- `data`: whatever the handler returned via `buildResult`
 
-The generic status checks are already in `verifyHelloResult` and `verifyGoodbyeResult`. The scaffold validates the SAY_HELLO response like this:
+Decoding `status` at the top level silently yields the zero value — failure — so every result reads as a rejection, including the successful ones. Decode `result` (`types.ActionResponse` in tee-node's `pkg/types`, or the inline struct in `directResult`).
 
-```go
-// verifyHelloResult
-var resp sayHelloResponse
-err = json.Unmarshal(actionResult.Data, &resp)
-if err != nil {
-    return errors.Errorf("failed to unmarshal response: %s", err)
-}
+## Matching op types between Solidity and the extension
 
-if resp.Greeting == "" {
-    return errors.New("expected non-empty Greeting")
-}
-if resp.GreetingNumber < 1 {
-    return errors.Errorf("expected GreetingNumber >= 1, got %d", resp.GreetingNumber)
-}
-```
-
-And the SAY_GOODBYE response like this:
-
-```go
-// verifyGoodbyeResult
-var resp sayGoodbyeResponse
-err = json.Unmarshal(actionResult.Data, &resp)
-if err != nil {
-    return errors.Errorf("failed to unmarshal response: %s", err)
-}
-
-if resp.Farewell == "" {
-    return errors.New("expected non-empty Farewell")
-}
-if resp.FarewellNumber < 1 {
-    return errors.Errorf("expected FarewellNumber >= 1, got %d", resp.FarewellNumber)
-}
-```
-
-Replace the response types, unmarshal targets, and field assertions with your own.
-
-### 4. Add more test cases
-
-The scaffold shows two send+verify pairs (SAY_HELLO and SAY_GOODBYE). For a real extension, add multiple test cases covering:
-
-- Each op type your extension supports
-- Success cases with valid inputs
-- Edge cases (empty fields, boundary values)
-- Error cases (invalid payloads that should return `status == 0`)
-
-### Matching op types between Solidity and your extension
-
-Your Solidity contract defines op types and op commands as `bytes32` constants:
+The contract defines the identifiers it sends as `bytes32` constants:
 
 ```solidity
-bytes32 constant OP_TYPE_GREETING  = bytes32("GREETING");
-bytes32 constant OP_COMMAND_SAY_HELLO   = bytes32("SAY_HELLO");
-bytes32 constant OP_COMMAND_SAY_GOODBYE = bytes32("SAY_GOODBYE");
+bytes32 public constant OP_TYPE_RFQ = bytes32("RFQ");
+bytes32 public constant OP_COMMAND_SETTLE = bytes32("SETTLE");
 ```
 
-Your extension routes on the same values. Go matches them explicitly in `processAction`:
-
-```go
-case dataFixed.OPType == teeutils.ToHash(config.OPTypeGreeting) &&
-    dataFixed.OPCommand == teeutils.ToHash(config.OPCommandSayHello):
-    return e.processSayHello(action, dataFixed)
-```
-
-Python and TypeScript register the pair up front and let the framework dispatch:
+The extension registers the pairs up front and lets the framework dispatch:
 
 ```python
-framework.handle(OP_TYPE_GREETING, OP_COMMAND_SAY_HELLO, handle_say_hello)
+framework.handle(OP_TYPE_RFQ, OP_COMMAND_QUOTE, handle_quote)
+framework.handle(OP_TYPE_RFQ, OP_COMMAND_SETTLE, handle_settle)
 ```
 
-```typescript
-framework.handle(OP_TYPE_GREETING, OP_COMMAND_SAY_HELLO, handleSayHello);
-```
+Both sides compare the same bytes32 encoding — the UTF-8 string right-padded with zeros to 32 bytes. **The strings must match exactly**; a mismatch is not a compile error, it silently falls through to "unsupported op type" (HTTP 501) at runtime.
 
-All three compare the same bytes32 encoding — the UTF-8 string right-padded with zeros to 32 bytes. **The strings must match Solidity exactly**; a mismatch is not a compile error, it silently falls through to "unsupported op type" (HTTP 501) at runtime.
+`QUOTE` has no constant in the contract, by design: a quote only ever arrives as a direct action, so the chain never learns it existed.
 
-The test sends instructions through the contract functions (`sendSayHello`, `sendSayGoodbye`), which set the OPType to `GREETING` and the corresponding OPCommand, then verifies the response matches whatever your handler returned. Because the test asserts on the wire format rather than on language types, it is identical for every implementation.
+## Where the assertions live
 
-## What you need to change (summary)
-
-| Step | What to change | Where |
-|------|---------------|-------|
-| Response types | Define structs for your extension's responses | `tools/cmd/run-test/main.go` (top of file) |
-| Message payloads | Create the JSON your contract function expects | `main()` in `run-test/main.go` |
-| Send instructions | Call your contract's specific function(s) (e.g. `SendSayHello`, `SendSayGoodbye`) | `main()` in `run-test/main.go` |
-| Validate responses | Unmarshal `Data` and assert your fields | `verifyHelloResult()` / `verifyGoodbyeResult()` in `run-test/main.go` |
-| Op type + command routing | Match the constants across Solidity and your extension | `go/internal/config/config.go`, `python/app/config.py`, or `typescript/src/app/config.ts` |
-| Add test scenarios | Add more send+verify pairs for each op command | `main()` in `run-test/main.go` |
-| Conformance fixtures | Regenerate after any request/response shape change | `testdata/conformance/gen_fixtures.py` |
-
-None of the `run-test` changes are language-specific: the tool asserts on the wire format, so one set of edits covers every implementation you maintain.
+| What | Where |
+|------|-------|
+| RFQ terms the test uses (YT amount, reserve, the two bids) | the constants at the top of `tools/cmd/run-test/main.go` |
+| The quote digest preimage, pinned across languages | `test/vectors/quote_digest.json`, replayed by `test/AgamaRfq.t.sol` and recomputed in `run-test` |
+| What the contract refuses to trust | `test/AgamaRfq.t.sol` |
+| The matcher's guarantees | `python/tests/` |
+| The wire contract | `testdata/conformance/`, regenerate with `testdata/conformance/gen_fixtures.py` |

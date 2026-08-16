@@ -9,7 +9,9 @@ Linear recipe to deploy a TEE extension to Flare Coston or Coston2. Run the step
 - 🔨 Foundry (`forge`, `cast`)
 - `jq`
 - Bash (Git Bash on Windows works)
-- VPN access to Flare's indexer DB (`35.241.249.150:3306`)
+- A C-chain indexer database for the proxy. Flare issues credentials to a hosted
+  one on request; `./scripts/start-indexer.sh` runs the same open-source indexer
+  locally instead, so no Flare credentials and no VPN are needed.
 
 ## 1. Get the extension repo
 
@@ -198,6 +200,10 @@ If `extensionId` is wrong, ask the VM operator to restart the container with the
 > `scripts/post-build.sh` already passes `-command rRap` (the tool's own default is `rap`). Override with `REGISTER_TEE_COMMAND` if you need to run individual steps.
 >
 > Step `a` (availability check) needs a one-time **challenge** — a random number from the contract that the TEE signs to prove it's alive. Lowercase `r` only issues one while pre-registering, and it skips itself once the TEE is registered on-chain, so re-runs (image changes, diamond cuts, retries) revert with `Verification.ChallengeExpired`. Capital `R` issues the challenge directly — decoupled from `r` — so re-runs work.
+>
+> Keep the `r`. `Rap` on its own only works for a machine the registry already
+> holds; after any VM restart the machine address is new (see the first platform
+> trap below) and has to be pre-registered before it can be attested or promoted.
 
 Run:
 
@@ -214,7 +220,11 @@ bash ./scripts/post-build.sh
 bash ./scripts/test.sh
 ```
 
-Sends test instructions through the deployed TEE and verifies the round-trip.
+Runs one full sealed-bid round trip against the deployed TEE: open an RFQ on
+chain, post two sealed quotes straight to the proxy, settle inside the enclave,
+relay the signed winner back and check who was paid. It first reads the live
+machine address from the proxy's `/info` and points the contract's
+`setTeeAddress` at it, because that address changes on every VM restart.
 
 ---
 
@@ -239,6 +249,17 @@ cast send <FlareTeeManager> 'pause(address)' <staleTeeId> --rpc-url "$CHAIN_URL"
 The live `teeId` is `keccak256(pubkey.x ‖ pubkey.y)[12:]` from the proxy's `/info`.
 There is no `unpause` — only `toProduction` with a fresh availability proof — so
 never pause the live one.
+
+The new machine is also unknown to the registry, so it must be **pre-registered**,
+not just re-attested:
+
+```bash
+REGISTER_TEE_COMMAND=rRap bash ./scripts/post-build.sh
+```
+
+`Rap` on its own assumes the registry already holds the machine. Anything a
+contract stored about the old address is stale too — here, `setTeeAddress` on the
+`InstructionSender`, which `test.sh` re-points from the live `/info`.
 
 ### One-shot bindings must be written last
 
@@ -281,12 +302,51 @@ main queue: processing action 0x… error: policy of the given reward epoch not 
 
 The node still answers — with `status: 0` and empty data. `/action/result/<id>` returns
 200, so anything that checks only the HTTP code reads this as success while the
-availability proof never arrives. `register-tee` now decodes the body and requires
-`status == 1`, surfacing the node's own `log` line.
+availability proof never arrives. `register-tee` decodes the body and requires
+`status == 1`, surfacing the node's own `log` line — reading that status out of the
+`result` envelope, not the top level (next trap).
 
 Two ways out: wait for the announced epoch to start (`getCurrentRewardEpochId()` on
 `FlareSystemsManager`), or restart the proxy alone — its restart path loads both
 `lastID-1` and `lastID`, where a cold init takes only the newest.
+
+### The result is wrapped, so a success reads as a rejection
+
+`/action/result/<id>` does not return an `ActionResult`. It returns an envelope —
+the result under `result`, beside the node and proxy signatures:
+
+```json
+{
+  "result": { "id": "0x…", "status": 1, "log": "", "data": "0x…" },
+  "signature": "0x…",
+  "proxySignature": "0x…"
+}
+```
+
+Decoding `status` at the top level silently yields the zero value, which is
+`status: 0` — failure. Every result then reads as a rejection, including the
+successful ones, and registration aborts one step before the availability
+request with a message blaming the node. `register-tee` decodes the envelope
+(`WaitForOwnAttestationResult` in `tools/pkg/fccutils/registration.go`); anything
+else that polls a result has to do the same.
+
+### The indexer drifts out of the proxy's sync window hours later
+
+tee-proxy compares the indexer's head against the chain and refuses to serve
+outside a hardcoded 60-second tolerance (`outOfSyncTolerance`, its
+`internal/proxy/proxy.go`). Catching up once is not enough — the indexer has to
+keep pace, and two settings decide whether it does:
+
+| Setting | Value | Why |
+|---|---|---|
+| `new_block_check_millis` | `200` | At `1000` the indexer advances about 0.7 blocks a minute slower than Coston2 produces them — roughly 40 blocks an hour. It looks healthy, then crosses the tolerance hours later. At `200` the lag holds at 8-15 seconds. |
+| `batch_size` | `20` | This is also the DB commit size: rows land only when a batch fills. At `1000` the indexer holds roughly half an hour of chain before writing anything, so its head is never inside the tolerance at all. |
+
+The failure surfaces as `Database out of sync` and a proxy that answers nothing,
+long after the deploy that "worked". The indexer logs no progress line and no
+rate, so measure it: `select max(number) from blocks` against the chain head.
+Both settings, and why the rest of them are what they are, live in
+`config/indexer/config.coston2.toml`.
 
 ---
 
