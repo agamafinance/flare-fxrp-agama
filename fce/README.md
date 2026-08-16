@@ -57,6 +57,11 @@ Two channels in, one out — the shape every FCE has:
   contract, not from whoever asked for a settlement.
 - **The seller's floor is enforced on chain too.** `settle` re-checks `price >= minPrice`, so even a
   misbehaving enclave cannot sell the YT below the reserve.
+- **Only a registered machine can settle.** `settle` requires the recovered signer to be a machine
+  the `FlareTeeManager` lists as active (PRODUCTION) for this extension — a whitelisted code hash on
+  attested hardware, checked against `getActiveTeeMachines`. An arbitrary key the contract owner
+  might set is not a registered machine and cannot settle; an optional `teeAddress` can narrow this
+  to one specific machine.
 - **The oracle actually decides.** Every premium is valued in USD through FTSOv2 and must fall inside
   a per-settlement band; ties at equal price are broken with Flare Secure RNG. Both are read from
   inside the enclave through the ContractRegistry.
@@ -127,12 +132,12 @@ Full lifecycle and the platform traps: [`docs/deployment-steps.md`](docs/deploym
 
 | | |
 |---|---|
-| `AgamaRfqInstructionSender` | [`0x1AEffa8EcCa1AC5763D138d25575230690E9fE87`](https://coston2-explorer.flare.network/address/0x1AEffa8EcCa1AC5763D138d25575230690E9fE87) |
-| Extension id (assigned by `TeeExtensionRegistry`) | `0x102f7` — **66295** |
+| `AgamaRfqInstructionSender` | [`0x40d282d699698193eE7f0379039E1aa0ec7016b6`](https://coston2-explorer.flare.network/address/0x40d282d699698193eE7f0379039E1aa0ec7016b6) |
+| Extension id (assigned by `TeeExtensionRegistry`) | `0x102fe` — **66302** |
 | `FlareTeeManager` | [`0x1a9C4A0f9D76c0b1D91d22E24E573a9b377618aE`](https://coston2-explorer.flare.network/address/0x1a9C4A0f9D76c0b1D91d22E24E573a9b377618aE) |
-| TEE machine | `0x0c695445a265EB04B674A61Fa5559541907db969` — status **2, PRODUCTION** |
+| TEE machine | `0x11356db7260a4C31D7e195F6492328DeB766bf29` — status **2, PRODUCTION** |
 | Attested identity | `GCP_AMD_SEV`, `dbgstat: disabled-since-boot`, `MODE=0` |
-| Code hash (whitelisted on chain) | `0x26ce84707a42b03763caa501515e0be069fe3d348a86f263592fd5ab9b611210` |
+| Code hash (whitelisted on chain) | `0x1e5e3d01c7a36ee8331a82144821965c0a0562018ddbbc88b2c319078daba74d` |
 | Traded pair | FXRP `0xb23b0daDa…1E3A6` · YT `0x1592f5cd4…E0B4D` |
 
 **Promoted to production, and settled end to end.** `register-tee` obtains its FTDC availability
@@ -142,7 +147,7 @@ execution inside the TEE, and the signed settlement relayed back.
 
 | | |
 |---|---|
-| Settlement tx | [`0x267e66e0…f32f`](https://coston2-explorer.flare.network/tx/0x267e66e0398d686edbd044d605b82a18deb6d3641c6b095dfe6b7b410f26f32f) |
+| Settlement tx | [`0xc0dc1ab1…13f8`](https://coston2-explorer.flare.network/tx/0xc0dc1ab1c7621e339883cb6f860959a9d152b56f767aa8d715e42b6a439d13f8) |
 | Premium paid | FXRP `6000000`, market maker `0xF275c111…21209` → seller `0x37F58cf2…6d88F` |
 | YT delivered | `100000000`, the RFQ escrow → the market maker |
 | The losing quote | `4000000` — never appeared on chain |
@@ -199,16 +204,15 @@ Submission and Relay but not for `FlareSystemsManager.signNewSigningPolicy`, so 
   binding reverts `settle` on a bad TEE signature long after the confidential part of the run has
   already succeeded. The encrypted state-backup design used by `fce-orderbook` (TPM-sealed DEK plus
   off-site backup) is the fix for the state itself, and is not wired in here.
-- **A stale machine record breaks settlement, and pausing it is the operator's job.**
+- **A stale machine record can still misroute an instruction — now bounded by `settle`.**
   `requestSettlement` routes to `getRandomTeeIds(extensionId, 1)` — a *random* machine among those
-  at status 2 — but `settle` accepts only the one signer behind the live proxy. Every earlier
-  deploy leaves its machine record at status 2 (the TEE key is memory-only, so each rebuild mints a
-  new address), so with more than one active record a settlement can be routed to a machine whose
-  node no longer exists and 404 forever. Observed directly here: after the security redeploy, three
-  machines were active and one round trip 404'd until the two stale ones were paused with
-  `pause(teeId)` on `FlareTeeManager`, leaving only `0x0c695445…db969`. There is no unpause, only
-  `toProduction` with a fresh availability proof. The durable fix is to bind `settle` to the machine
-  registry rather than a random draw; see the residual findings below.
+  at status 2. The TEE key is memory-only, so each rebuild mints a new machine address and leaves
+  the old record at status 2 until it is paused. `settle` now accepts *any* machine the registry
+  lists as active for the extension (not a single pinned address), so a result from whichever machine
+  the draw picked still verifies — but a draw that lands on a machine whose node no longer exists
+  returns no result at all. So stale records are still worth pausing with `pause(teeId)` on
+  `FlareTeeManager` (there is no unpause, only `toProduction` with a fresh availability proof); the
+  registry binding removes the *wrong-signer* failure, not the *dead-node* one.
 - **The Python image is reproducible on the same machine only.** Cross-machine bit-for-bit builds —
   what lets an auditor reproduce the code hash themselves — need the Go path. That port is the
   natural follow-up; the wire contract and the fixtures are language-neutral, which is what makes it

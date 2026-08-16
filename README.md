@@ -179,10 +179,12 @@ The version above verifies the enclave attestation **on chain** (`ConfidentialSp
 TDX) — anyone can independently check that the signing key belongs to the approved image. [`fce/`](fce/)
 is the same confidential RFQ rebuilt as a **Flare Compute Extension**: instead of a custom on-chain
 registry, the TEE machine is registered with Flare's own `FlareTeeManager`, and the enclave runs in a
-GCP Confidential Space VM on **AMD SEV**. It is deployed and settling on Coston2 — extension **66295**,
-`AgamaRfqInstructionSender` `0x1AEffa8EcCa1AC5763D138d25575230690E9fE87`, machine
-`0x0c695445…db969` at PRODUCTION — with the C-chain indexer self-hosted (no Flare-issued database
-credentials) and a full round trip proven on chain (tx `0x267e66e0…`).
+GCP Confidential Space VM on **AMD SEV**. It is deployed and settling on Coston2 — extension **66302**,
+`AgamaRfqInstructionSender` `0x40d282d699698193eE7f0379039E1aa0ec7016b6`, machine
+`0x11356db7…6bf29` at PRODUCTION — with the C-chain indexer self-hosted (no Flare-issued database
+credentials) and a full round trip proven on chain (tx `0xc0dc1ab1…`). `settle` binds the accepted
+signer to the machine registry (`getActiveTeeMachines`), so only a registry-active, attested machine
+can settle — not merely an address the owner set.
 
 The two are complementary, not duplicates. `fce/` gains **per-market-maker sealed submission** (each
 MM's quote is sealed from the aggregator, not just from the chain) and moves the **FTSO USD price band
