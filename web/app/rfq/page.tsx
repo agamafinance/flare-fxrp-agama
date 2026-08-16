@@ -104,7 +104,7 @@ export default function FlareRfqPage() {
           <h1 className="mt-4 text-[34px] md:text-[44px] leading-[1.05] text-fg font-semibold">Request a quote</h1>
           <p className="mt-4 max-w-[680px] text-[15px] text-fg-muted">
             Your fixed rate is funded by selling the variable yield (YT) in a sealed-bid auction. Market
-            makers bid privately inside a Flare Confidential Compute enclave (Intel TDX); it signs only the
+            makers bid privately inside a Flare Confidential Compute enclave (AMD SEV); it signs only the
             winner, and the contract verifies that signature on chain before settling. Losing and forged
             bids never touch the chain.
           </p>
@@ -262,7 +262,7 @@ export default function FlareRfqPage() {
                       <dt className="text-fg-muted">Key</dt>
                       <dd className="font-mono text-fg break-all">{short(res.enclave.address)}</dd>
                       <dt className="text-fg-muted">Platform</dt>
-                      <dd className="text-fg">{res.enclave.hwmodel || 'Intel TDX'} · {res.enclave.dbgstat || 'disabled-since-boot'}</dd>
+                      <dd className="text-fg">{res.enclave.hwmodel || 'GCP_AMD_SEV'} · {res.enclave.dbgstat || 'disabled-since-boot'}</dd>
                       <dt className="text-fg-muted">Image</dt>
                       <dd className="font-mono text-fg break-all">{(res.enclave.imageDigest || '').slice(0, 24) || '—'}…</dd>
                     </dl>
@@ -287,7 +287,7 @@ export default function FlareRfqPage() {
             <h2 className="text-[13px] uppercase tracking-wider text-fg-muted pb-3">How the auction works</h2>
             <div className="grid gap-4 md:grid-cols-3">
               <Feature icon={<Lock className="h-4 w-4" />} title="Sealed bids" desc="Market makers submit encrypted bids for your YT. No bidder sees another's price, and a quote forged for another maker is rejected." />
-              <Feature icon={<ShieldCheck className="h-4 w-4" />} title="Settled in a TEE" desc="A Flare Confidential Space enclave (Intel TDX, non-debuggable) opens the bids, clears the auction and signs only the winner. Its key is attested on chain." />
+              <Feature icon={<ShieldCheck className="h-4 w-4" />} title="Settled in a TEE" desc="A Flare Confidential Space enclave (AMD SEV, non-debuggable), registered as a Flare Compute Extension, opens the bids, clears the auction and signs only the winner. settle() verifies the signer is an active machine in Flare's registry." />
               <Feature icon={<Sparkles className="h-4 w-4" />} title="Best premium to you" desc="The highest bid clears and settles atomically on Coston2. The premium funds your fixed rate; the spread stays with you." />
             </div>
           </div>

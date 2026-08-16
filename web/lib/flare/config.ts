@@ -22,7 +22,7 @@ export const ADDR = {
   // confidential YT market (the RFQ showcase, long-lived stack)
   splitter: '0xcB633439CCa82035Dfb0553Caed2552818E3a29E', // FXRP -> PT + YT
   yt: '0x1592f5cd44676f182162AC9DC09F9B12C68E0B4D', // yield token (variable yield)
-  rfq: '0x73F18087dd45d180e75cADcD383479624326E336', // ConfidentialYtRfq
+  rfq: '0x40d282d699698193eE7f0379039E1aa0ec7016b6', // AgamaRfqInstructionSender — Flare Compute Extension 66302 (AMD SEV)
 } as const;
 
 export const YT_DECIMALS = 6;
