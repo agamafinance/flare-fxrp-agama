@@ -26,7 +26,12 @@ jobs:
         run: python -m pytest -q
       # Replays the golden fixtures against a live extension process — no chain,
       # no TEE, no Docker. Catches wire-format drift against tee-node.
-      - run: ./scripts/test-conformance.sh python --skip-setup
+      #
+      # Not --skip-setup: python/language.env runs the extension from
+      # ./.venv/bin/python, and that venv is gitignored, so on a fresh checkout
+      # only the setup step creates it. With --skip-setup this step failed in CI
+      # while passing on any dev machine that already had the venv.
+      - run: ./scripts/test-conformance.sh python
 
   tools:
     runs-on: ubuntu-latest
@@ -35,5 +40,9 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version: "1.25" }
       - working-directory: tools
+        run: go build ./...
+      - working-directory: tools
         run: go vet ./...
+      - working-directory: tools
+        run: go test ./...
       - run: ./scripts/check-versions.sh
