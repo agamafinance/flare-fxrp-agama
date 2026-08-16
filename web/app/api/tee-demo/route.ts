@@ -128,9 +128,12 @@ export async function POST(req: Request) {
   try { body = await req.json(); } catch { /* no body = demo mode */ }
   const userRfqId = body?.rfqId;
 
-  const ENCLAVE = (env.ENCLAVE_URL || 'http://136.113.147.228:6674').replace(/\/$/, '');
-  const RFQ = (env.RFQ_ADDR || '0x40d282d699698193eE7f0379039E1aa0ec7016b6') as Hex;
-  const FXRP = (env.FXRP_ADDR || '0xb23b0daDa02c86D2A7E76d2060c34Fff14D1E3A6') as Hex;
+  // The FCC deployment is pinned here, not read from the environment, so a stale
+  // ENCLAVE_URL/RFQ_ADDR left over from the earlier Intel-TDX stack cannot send
+  // the demo to the wrong enclave or contract. Only the signing keys come from env.
+  const ENCLAVE = 'http://136.113.147.228:6674'; // extension proxy (:6674), stable support-VM IP
+  const RFQ = '0x40d282d699698193eE7f0379039E1aa0ec7016b6' as Hex; // AgamaRfqInstructionSender, ext 66302
+  const FXRP = '0xb23b0daDa02c86D2A7E76d2060c34Fff14D1E3A6' as Hex;
 
   try {
     const pub = createPublicClient({ chain: coston2, transport: http(RPC_URL) });
