@@ -171,7 +171,14 @@ enclave and settled on chain.
 wallet the seller: it splits your FXRP into PT + YT and opens your own on-chain RFQ, then the deployed
 backend (`web/app/api/tee-demo`) submits the market-maker bids to the live enclave, gets the winning
 signature and relays the `settle` on chain. A per-step tracker shows every transaction, and the winning
-premium lands in your wallet. Running on app.agama.finance/flare/rfq and agama-fixed-rate.vercel.app/rfq.
+premium lands in your wallet.
+
+The deployed demo at **agama-fixed-rate.vercel.app/rfq** now settles over the Flare Compute Extension
+in [`fce/`](fce/) — extension 66302 on GCP AMD SEV — rather than the on-chain-attested TDX variant:
+each quote is posted sealed to the extension proxy, settlement is requested on chain, and `settle()`
+checks the signer against Flare's machine registry. Verified live from the deployed site (settle tx
+`0xa10842ea…`). The wider app at app.agama.finance/flare/rfq is a separate deployment and still runs
+the TDX build.
 
 ### The same RFQ on Flare's own rails — [`fce/`](fce/)
 
