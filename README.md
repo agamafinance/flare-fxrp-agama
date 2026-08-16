@@ -173,6 +173,25 @@ backend (`web/app/api/tee-demo`) submits the market-maker bids to the live encla
 signature and relays the `settle` on chain. A per-step tracker shows every transaction, and the winning
 premium lands in your wallet. Running on app.agama.finance/flare/rfq and agama-fixed-rate.vercel.app/rfq.
 
+### The same RFQ on Flare's own rails — [`fce/`](fce/)
+
+The version above verifies the enclave attestation **on chain** (`ConfidentialSpaceRegistry`, Intel
+TDX) — anyone can independently check that the signing key belongs to the approved image. [`fce/`](fce/)
+is the same confidential RFQ rebuilt as a **Flare Compute Extension**: instead of a custom on-chain
+registry, the TEE machine is registered with Flare's own `FlareTeeManager`, and the enclave runs in a
+GCP Confidential Space VM on **AMD SEV**. It is deployed and settling on Coston2 — extension **66295**,
+`AgamaRfqInstructionSender` `0x1AEffa8EcCa1AC5763D138d25575230690E9fE87`, machine
+`0x0c695445…db969` at PRODUCTION — with the C-chain indexer self-hosted (no Flare-issued database
+credentials) and a full round trip proven on chain (tx `0x267e66e0…`).
+
+The two are complementary, not duplicates. `fce/` gains **per-market-maker sealed submission** (each
+MM's quote is sealed from the aggregator, not just from the chain) and moves the **FTSO USD price band
+on chain**, so the settlement contract — not only the enclave — bounds the premium. What it trades away
+is the on-chain attestation check the TDX version has: `fce/` trusts a `teeAddress` registered off
+chain into `FlareTeeManager` rather than a Google-signed token verified by the contract. See
+[`fce/README.md`](fce/README.md) and [`fce/docs/`](fce/docs/) for the deployment, the six scaffold bugs
+found building it, and the upstream issue drafts.
+
 ## Live on Coston2 (chainId 114)
 
 Self-contained demo deployment (demo FXRP has a public `mint()` so anyone can try it).

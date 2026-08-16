@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+# Two Foundry projects live here: the root (fixed-rate vault, AMM, FDC on-ramp,
+# the on-chain-attested ConfidentialYtRfq) and fce/ (the same confidential RFQ
+# rebuilt as a Flare Compute Extension). Their libs are vendored under the root
+# lib/, so no submodule checkout is needed; fce/foundry.toml points at ../lib.
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: forge build --sizes
+      - run: forge test -vv
+
+  fce-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - working-directory: fce
+        run: forge build --sizes
+      - working-directory: fce
+        run: forge test -vv
+
+  fce-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - working-directory: fce/python
+        run: pip install -r requirements-dev.txt
+      - working-directory: fce/python
+        run: python -m pytest -q
+      # Replays the golden fixtures against a live extension process — no chain,
+      # no TEE, no Docker. Not --skip-setup: the run command uses ./.venv, which
+      # is gitignored, so only the setup step creates it on a fresh checkout.
+      - working-directory: fce
+        run: ./scripts/test-conformance.sh python
+
+  fce-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.25" }
+      # The agamarfq Go binding is generated from the compiled contract and is
+      # gitignored, so go build/vet/test need forge to produce it first.
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: ./fce/scripts/generate-bindings.sh
+      - working-directory: fce/tools
+        run: go build ./...
+      - working-directory: fce/tools
+        run: go vet ./...
+      - working-directory: fce/tools
+        run: go test ./...
+      - working-directory: fce
+        run: ./scripts/check-versions.sh
